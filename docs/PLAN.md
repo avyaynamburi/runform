@@ -264,13 +264,41 @@ src/runform/
   - Lead checks in headless Chrome with the sample clip: screenshots mid-intro (partial skeleton), after the intro (full skeleton on the runner during playback), and at phone width. There must be no console errors.
 - Out of scope: stat explainers (W3/W4).
 
-### W3 / W4 — Stat explainers (specs written later)
-- Planned: the API adds `strikes`, per-frame trunk lean, per-strike knee angles, and per-stride hip-height windows. The guided scenes are:
-  - **cadence:** the feet flash at each strike while a step counter ticks and a metronome bar pulses
-  - **trunk lean:** a hip→shoulder line, a dashed vertical reference and a live angle arc
-  - **knee:** the video pauses on strike frames and draws the knee angle arc and value
-  - **vertical oscillation:** the hip point leaves a glowing trail, with horizontal top and bottom guide lines and a bracket showing the bounce
-  - Then the stat cards.
+### W3 — Guided tour: cadence + trunk lean
+- Goal: after the intro, a guided tour plays a short animated scene for each stat that shows how it was measured. W3 adds the cadence and trunk lean scenes.
+- Files: `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`
+- Steps:
+  - API: the response adds `strikes` (`[{"frame": int, "foot": "left"|"right"}]` from `analysis.strikes`) and `series`, which holds `{"trunk_lean_deg": [per frame, rounded to 1 decimal, or null]}` from `metrics.trunk_lean(analysis.clean)`.
+  - Tour framework: a `scenes` array where each scene is `{id, title, value(report), caption, draw(ctx, frame, frameIndex)}`. W4 will add scenes by appending to this array, so keep it generic.
+    - Under the stage there's a row of scene chips (Cadence, Trunk lean), the active one highlighted.
+    - On the stage, a scene card (top-left, replacing the "Live tracking" label) shows the scene title, the big value and a one- or two-sentence caption. It also has a thin progress bar.
+    - After the intro, the tour auto-plays: each scene lasts 8 s of wall-clock time while the video plays at 0.5×, then the next one starts. After the last scene it goes to free "Live tracking" mode.
+    - Clicking a chip jumps to that scene and restarts its timer. Replay intro restarts the intro and then the tour.
+  - Every scene draws its overlay on top of the skeleton. The skeleton stays visible but dimmed to about 40% opacity, so the scene's overlay stands out.
+  - All overlays are **stateless**: they're computed from `frameIndex` and the API data, so seeking and looping just work.
+  - **Cadence scene** (accent: the side colors, cyan/violet):
+    - For each strike within the last ~12 frames, draw an expanding, fading ring at that foot's heel (29 or 30) in the side's color.
+    - A step counter on the stage shows "Steps: n", where n is the number of strikes with frame ≤ frameIndex.
+    - A timeline strip along the bottom of the stage shows the whole clip, with a tick for every strike (left on the top row, right on the bottom row) and a moving playhead.
+    - Caption: "Every time a heel hits its lowest point, that's a foot strike. The median time between strikes of the same foot gives your cadence."
+  - **Trunk lean scene** (accent amber #f59e0b):
+    - A thick line from the hip midpoint to the shoulder midpoint.
+    - A dashed vertical line going up from the hip midpoint, the same length.
+    - An arc between the two lines, labeled with the current frame's `trunk_lean_deg` (for example 7.2°).
+    - Caption: "The angle between your hip-to-shoulder line and vertical, averaged over every frame."
+  - Expose the current scene id in the `window.__runform` debug hook (`scene`), for automated checks.
+  - Polish: once results arrive, smooth-scroll the stage into view.
+- Acceptance:
+  - `ruff check . && pytest -q` and `node --check`.
+  - `test_web.py`: `strikes` matches `analysis.strikes` (frame and foot), and `series.trunk_lean_deg` has n_frames entries. With `lean_deg=10`, the values are about 10. A NaN frame gives `null`.
+  - Lead checks in headless Chrome with the sample clip: screenshots during each scene, and after the tour (live mode). Chip navigation works. No console errors.
+- Out of scope: the knee and vertical oscillation scenes (W4).
+
+### W4 — Guided tour: knee at strike + vertical oscillation (spec written when W3 is done)
+- Planned:
+  - **knee scene:** pauses briefly on each strike frame, draws the angle arc at the knee and shows its value.
+  - **vertical oscillation scene:** the hip midpoint leaves a glowing trail, with horizontal top and bottom guides per stride and a bracket showing the bounce as a percentage of body height.
+  - Then a final "summary" scene that leads into the stat cards.
 
 ## Later (not in MVP)
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
