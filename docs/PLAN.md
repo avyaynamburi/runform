@@ -222,7 +222,8 @@ src/runform/
 | W3 | Explainers: cadence + trunk lean | done |
 | W4 | Explainers: knee at strike + vertical oscillation; polish | done |
 | W5 | Cinematic camera: title card, zooms per scene | done |
-| W6 | Chart beats: each scene opens with its graph, then the zoomed video | done |
+| W6 | Chart beats: each scene opens with its graph, then the zoomed video | done (superseded by W7) |
+| W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | todo |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
@@ -376,6 +377,61 @@ src/runform/
   - `test_web.py`: `series.hip_height_rel` has n_frames entries, with null for NaN frames.
   - Lead checks in headless Chrome with the sample clip: screenshots of all four chart beats and the cut into the zoomed video. Hovering shows a tooltip. No label collisions. No console errors.
 - Out of scope: new metrics, export.
+
+### W7 — Immersive single-shot tour
+- Why: user feedback on W6 was that the chart-only beats break the feel. The tour should be one continuous shot in which the video never leaves the screen. Measurements live *inside* the shot as overlays tied to the body (head-up-display style, "HUD"), not on separate screens.
+- Goal: the guided tour plays as one unbroken, immersive sequence. Each scene's data, including the vertical oscillation graph, is drawn in-world, anchored to the body, while the camera glides between body parts.
+- Files: `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`
+- Steps:
+  - **Remove the W6 chart beats completely:** the chart panel, chart canvas, beat system, chart hover and cross-fade. Leave no dead code. Remove `beat` from the debug hook. Each scene is one continuous beat: 9 s for cadence, lean, knee and bounce, and 7 s for summary. The API stays unchanged; `series.hip_height_rel` is no longer required by the front end.
+  - **Lower-third instead of the scene card:**
+    - A gradient scrim (transparent → rgba(0, 0, 0, 0.65)) across the bottom ~30% of the stage, above the letterbox bar.
+    - Bottom left on top of it: a small uppercase label in the scene accent ("02 · TRUNK LEAN"), then the big value in a 44 px monospace font that **counts up** from 0 over 900 ms (ease-out), then a one-line caption (15 px).
+    - It slides up and fades in 400 ms after the scene starts, and fades out over the last 500 ms.
+    - At phone width it stays overlaid on the video at a smaller size (value 30 px, caption 13 px).
+    - Captions:
+      - cadence: "Each heel strike is a step — this is your rhythm."
+      - lean: "How far your torso tips forward from vertical."
+      - knee: "Your knee angle the instant your foot lands. 180° is a straight leg."
+      - bounce: "How much your hips rise and fall with every stride."
+      - summary: "That's your stride."
+    - Summary shows the four values in a single row (2×2 on phone) instead of one big number.
+  - **Overlay fades:** every scene overlay is drawn with an `alpha` that eases in over the first 700 ms and out over the last 600 ms of the scene. The camera glides to the next focus during the fade. Nothing pops. The skeleton dims to 40% during scenes, as now.
+  - **Cadence HUD (rhythm strip):**
+    - Keep the heel rings.
+    - Replace the full-clip timeline with a strip floating in-world just below the lowest foot point (projected), 60% of the stage width, centered on the feet's x.
+    - It shows ±2 s of strikes scrolling right to left past a fixed center playhead, with left ticks on the top row and right ticks on the bottom row.
+    - A tick brightens and glows as it crosses the playhead.
+    - Clamp the strip inside the stage, above the lower-third.
+  - **Lean HUD (dial):**
+    - Keep the amber trunk line, dashed vertical and arc on the body.
+    - Add a small semicircular dial (radius about 44 px) floating up and to the right of the shoulder midpoint (projected, clamped inside the stage). Its scale runs 0–20°, with ticks every 5°.
+    - An amber needle shows the current frame's lean, smoothed with an EMA of about 150 ms. A small white mark shows the average.
+    - The current value is drawn in the dial's center in a monospace font.
+    - Remove the old lean pill label, since the dial replaces it.
+  - **Knee HUD:**
+    - Keep the freeze on strike frames, plus the pink leg, knee arc and angle pill.
+    - On each freeze, add a white flash (a full-stage overlay at alpha 0.22 fading to 0 over 300 ms) and a camera punch: target scale × 1.08, easing back over 600 ms.
+    - Add a strike history: a vertical stack of the last 5 strike angles beside the knee (on the side away from the body's facing direction), the newest at the top in pink and older ones fading.
+  - **Bounce HUD (the in-world graph):**
+    - Upgrade the seismograph into a live graph anchored to the hip midpoint. The trace covers the last 3 s (90 frames at 30 fps; use fps) and scrolls left from the current hip point.
+    - x offset = `(frameIndex − i) · stageWidth · 0.5 / window_frames`, so 3 s spans half the stage. The y is each frame's projected hip-mid y.
+    - Line: 2.5 px with a glow.
+    - Faint horizontal guide lines at the current stride's top and bottom y, spanning the trace width.
+    - For every stride of `strides[0].foot` whose `top` frame is inside the trace window, a thin vertical bracket at that point from bottom to top, with a small pill showing that stride's value ("8.4%"). Skip labels that would overlap.
+    - A glowing dot at the current hip point.
+  - **Summary:** no overlay. The camera eases to full frame and the skeleton returns to full opacity.
+  - Keep the title card, intro, camera, backdrop, vignette, letterbox bars, chips, controls, reduced motion (count-ups snap, no flash or punch) and the debug hook (phase, scene, frameIndex, camera).
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - `test_web.py`: the served index has the lower-third element and no chart panel.
+  - Lead checks in headless Chrome with the sample clip:
+    - a continuous tour (the video is visible in every screenshot)
+    - each HUD: rhythm strip, lean dial, knee flash and history, bounce graph with stride labels
+    - the lower-third count-up
+    - the phone layout
+    - no console errors
+- Out of scope: API changes, new metrics.
 
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
