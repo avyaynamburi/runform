@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from runform.gait import cadence, detect_foot_strikes
-from runform.metrics import knee_flexion_at_strikes, trunk_lean
+from runform.metrics import knee_flexion_at_strikes, trunk_lean, vertical_oscillation
 from runform.pose import extract_landmarks
 from runform.report import build_report
 from runform.video import read_frames
@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> None:
     report = build_report(
         landmarks, len(strikes), cadence(strikes, fps), trunk_lean(landmarks),
         knee_flexion_at_strikes(landmarks, strikes),
+        vertical_oscillation(landmarks, strikes),
     )
     args.out.write_text(json.dumps(report, indent=2) + "\n")
     print(
@@ -38,3 +39,8 @@ def main(argv: list[str] | None = None) -> None:
     knee = report['knee_flexion_at_strike_deg']
     knee_text = "unavailable" if knee is None else f"{knee['mean']} +/- {knee['std']}"
     print(f"Knee at strike: {knee_text} deg")
+    oscillation = report['vertical_oscillation_rel']
+    oscillation_text = (
+        "unavailable" if oscillation is None else f"{oscillation} of body height"
+    )
+    print(f"Vertical oscillation: {oscillation_text}")

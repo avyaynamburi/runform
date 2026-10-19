@@ -4,7 +4,53 @@ import numpy as np
 import pytest
 
 from runform.gait import Strike
-from runform.metrics import facing_sign, joint_angle, knee_flexion_at_strikes, trunk_lean
+from runform.metrics import (
+    facing_sign,
+    joint_angle,
+    knee_flexion_at_strikes,
+    trunk_lean,
+    vertical_oscillation,
+)
+
+
+def test_vertical_oscillation_stride_windows(make_landmarks):
+    landmarks = make_landmarks(9, 30, aspect=0.5)
+    landmarks.data[:, [23, 24], 1] = np.array(
+        [0.5, 0.51, 0.52, 0.51, 0.5, 0.54, 0.56, 0.54, 0.5]
+    )[:, None]
+    strikes = [
+        Strike(8, "left"), Strike(0, "right"), Strike(0, "left"),
+        Strike(4, "left"), Strike(4, "right"),
+    ]
+    np.testing.assert_allclose(
+        vertical_oscillation(landmarks, strikes), np.array([0.02, 0.06, 0.02]) / 0.6,
+    )
+
+
+@pytest.mark.parametrize("strikes", [[], [Strike(0, "left"), Strike(4, "right")]])
+def test_vertical_oscillation_no_strides(make_landmarks, strikes):
+    assert vertical_oscillation(make_landmarks(5, 30), strikes).shape == (0,)
+
+
+@pytest.mark.parametrize("height", [np.nan, 0.0, -0.1])
+def test_vertical_oscillation_invalid_height(make_landmarks, height):
+    landmarks = make_landmarks(5, 30)
+    landmarks.data[:, [27, 28], 1] = 0.3 + height
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        assert vertical_oscillation(
+            landmarks, [Strike(0, "left"), Strike(4, "left")],
+        ).shape == (0,)
+
+
+def test_vertical_oscillation_missing_hips(make_landmarks):
+    landmarks = make_landmarks(5, 30)
+    landmarks.data[:3, [23, 24], 1] = np.nan
+    landmarks.data[4, [23, 24], 1] = 0.56
+    strikes = [Strike(0, "left"), Strike(2, "left"), Strike(4, "left")]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        np.testing.assert_allclose(vertical_oscillation(landmarks, strikes), [0.1])
 
 
 def test_joint_angle():

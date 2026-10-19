@@ -10,7 +10,7 @@ from runform.landmarks import Landmarks
 def make_landmarks():
     def make(
         n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False,
-        lean_deg=0.0, aspect=1.0, knee_deg=180.0,
+        lean_deg=0.0, aspect=1.0, knee_deg=180.0, hip_amp=0.0,
     ):
         pose = np.full((33, 3), (0.5, 0.5, 1.0))
         for left, right, height in [(11, 12, 0.3), (23, 24, 0.5), (25, 26, 0.7), (27, 28, 0.9)]:
@@ -25,6 +25,8 @@ def make_landmarks():
         if cadence_spm is not None:
             t = np.arange(n_frames) / fps
             stride_seconds = 2 * 60 / cadence_spm
+            w = 2 * np.pi * (cadence_spm / 2 / 60)
+            data[:, [11, 12, 23, 24], 1] += (hip_amp * np.sin(2 * w * t))[:, None]
             for heel, phase in [(29, 0), (30, np.pi)]:
                 sine = np.sin(2 * np.pi * (cadence_spm / 2 / 60) * t + phase)
                 angles = knee_deg - 20 * (1 - sine)

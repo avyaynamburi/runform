@@ -27,6 +27,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
         "strikes_detected": 0, "cadence_spm": None,
         "trunk_lean_deg": 0.0,
         "knee_flexion_at_strike_deg": None,
+        "vertical_oscillation_rel": None,
     }
     summary = capsys.readouterr().out
     assert "FPS: 25" in summary
@@ -35,6 +36,21 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     assert "Cadence: unavailable" in summary
     assert "Trunk lean: 0.0 deg" in summary
     assert "Knee at strike: unavailable" in summary
+    assert "Vertical oscillation: unavailable" in summary
+
+
+def test_analyze_vertical_oscillation(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(300, 30, cadence_spm=170, hip_amp=0.015)
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    value = json.loads(output.read_text())["vertical_oscillation_rel"]
+    assert value == pytest.approx(0.05, rel=0.1)
+    assert value == round(value, 3)
+    assert f"Vertical oscillation: {value} of body height" in capsys.readouterr().out
 
 
 def test_analyze_knee_at_strike(monkeypatch, tmp_path, make_landmarks, capsys):
