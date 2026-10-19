@@ -170,19 +170,29 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Out of scope: smoothing (T6) and absolute units.
 
 ### T6 — Robustness: gaps and noise
-- Goal: the pipeline handles dropped detections and jitter. The report gains a `warnings` list, for example a warning when under 80% of frames have a pose.
+- Goal: the pipeline handles dropped detections and jitter. The report gains `warnings`, a list of strings: `[]` normally, and a low-coverage message when under 80% of frames have a pose.
 - Files: `src/runform/smoothing.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_smoothing.py`, `tests/test_cli.py`
-- Steps: `fill_gaps` interpolates NaN runs of 5 frames or fewer. `smooth` applies a Savitzky–Golay filter. Both run before gait and the metrics.
+- Steps:
+  - `smoothing.py` (pure NumPy/SciPy). Both functions return a new `Landmarks` with the same fps and aspect and don't modify their input:
+    - `fill_gaps(lm, max_gap=5)`: for each landmark and coordinate (x, y, and visibility), linearly interpolate interior NaN runs of `max_gap` frames or fewer. Longer runs and leading/trailing NaNs stay NaN.
+    - `smooth(lm)`: apply a Savitzky–Golay filter (polyorder 2) to x and y along time, separately for each contiguous run of finite values. Window = the odd number nearest `0.15 · fps`, minimum 5. Runs shorter than the window are left unchanged. Visibility is not smoothed. (Lead measured this window: it keeps ≥98% of step-rate bounce up to 200 spm. Wider windows lose up to 22%.)
+  - CLI: `clean = smooth(fill_gaps(raw))`. Gait and every metric use `clean`. `build_report` still gets the **raw** landmarks, so `frames_with_pose` keeps counting real detections. It also gets `warnings` computed in the CLI.
+  - Warning text: `"Pose detected in only {pct:.0f}% of frames; metrics may be unreliable"` when frames_with_pose / frames_total < 0.8 and frames_total > 0. The CLI prints each warning as `Warning: ...`.
+  - Fixture: add `dropout=0.0`. A seeded random fraction of frames becomes all-NaN, applied last.
 - Acceptance:
-  - `ruff check . && pytest -q`.
-  - The CLI test uses a fixture with 10% dropped frames and noise, and the cadence still comes out within ±3 spm.
-  - With 30% dropped frames, the warning appears.
+  - `ruff check . && pytest -q`. All existing tests keep their current tolerances.
+  - CLI test: `cadence_spm=170, noise=0.005, dropout=0.1` (300 frames, 30 fps) gives cadence within ±3 and `warnings == []`. With `dropout=0.3`, the warning is present.
+  - `test_smoothing.py`: a 3-frame gap is filled linearly and a 6-frame gap is not. Leading NaNs stay NaN. Smoothing reduces the std of a noisy constant signal by at least 2×. A pure 2.83 Hz sine at 30 fps keeps ≥95% of its peak-to-peak. The input object is unchanged.
+- Out of scope: the visibility threshold, outlier rejection, and refactoring gait.py's internal moving average.
 
 ### Done when
 - `pytest` passes in full.
 - `runform analyze samples/side_run.mp4` (a clip the user adds) gives a cadence that matches a manual count from the video within ±5 spm. The user checks this by hand.
 
 ## Later (not in MVP)
+- Deduplicate the body-height computation in `gait.py` and `metrics.py`.
+- Stream frames instead of holding the whole video in memory (`read_frames` returns a list).
+- Download the pose model atomically (temp file, then rename) so an interrupted download can't leave a corrupt cache.
 - An annotated output video with the skeleton and angles drawn on it.
 - Overstride measurement (the foot's horizontal offset from the hip at strike).
 - Ground contact time.
