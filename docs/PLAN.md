@@ -217,7 +217,7 @@ src/runform/
 
 | Task | Slice | Status |
 |---|---|---|
-| W1 | Upload → stats cards | todo |
+| W1 | Upload → stats cards | done |
 | W2 | Skeleton overlay + draw-in intro | todo |
 | W3 | Explainers: cadence + trunk lean | todo |
 | W4 | Explainers: knee at strike + vertical oscillation; polish | todo |

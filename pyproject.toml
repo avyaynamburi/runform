@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "runform"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["numpy", "scipy", "opencv-python", "mediapipe"]
+dependencies = ["numpy", "scipy", "opencv-python", "mediapipe", "flask>=3.1"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
@@ -16,6 +16,9 @@ runform = "runform.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+runform = ["static/*"]
 
 [tool.ruff]
 line-length = 100

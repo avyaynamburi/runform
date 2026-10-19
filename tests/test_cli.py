@@ -11,7 +11,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(10, 25.0)
     landmarks.data[3:5] = np.nan
     frames = [object() for _ in range(10)]
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: (frames, 25.0))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: (frames, 25.0))
 
     def extract(actual_frames, fps, model=None):
         assert actual_frames is frames
@@ -19,7 +19,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
         assert model is None
         return landmarks
 
-    monkeypatch.setattr("runform.cli.extract_landmarks", extract)
+    monkeypatch.setattr("runform.pipeline.extract_landmarks", extract)
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
     assert json.loads(output.read_text()) == {
@@ -42,9 +42,9 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
 
 def test_analyze_vertical_oscillation(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(300, 30, cadence_spm=170, hip_amp=0.015)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -56,9 +56,9 @@ def test_analyze_vertical_oscillation(monkeypatch, tmp_path, make_landmarks, cap
 
 def test_analyze_knee_at_strike(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(300, 30, cadence_spm=170, knee_deg=165, aspect=720 / 1008)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -72,9 +72,9 @@ def test_analyze_knee_at_strike(monkeypatch, tmp_path, make_landmarks, capsys):
 def test_analyze_invalid_strike_knees(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(300, 30, cadence_spm=170)
     landmarks.data[:, [25, 26], :2] = np.nan
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     with warnings.catch_warnings():
@@ -88,9 +88,9 @@ def test_analyze_invalid_strike_knees(monkeypatch, tmp_path, make_landmarks, cap
 
 def test_analyze_cadence(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(300, 30, cadence_spm=170)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -103,9 +103,9 @@ def test_analyze_cadence(monkeypatch, tmp_path, make_landmarks, capsys):
 
 def test_analyze_cadence_double_bump(monkeypatch, tmp_path, make_landmarks):
     landmarks = make_landmarks(300, 30, cadence_spm=170, double_bump=True)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -115,9 +115,9 @@ def test_analyze_cadence_double_bump(monkeypatch, tmp_path, make_landmarks):
 
 def test_analyze_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsys):
     landmarks = make_landmarks(10, 30, lean_deg=10, aspect=720 / 1008)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -130,9 +130,9 @@ def test_analyze_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsys):
 def test_analyze_no_pose_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsys, n_frames):
     landmarks = make_landmarks(n_frames, 30)
     landmarks.data[:] = np.nan
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     with warnings.catch_warnings():
@@ -147,9 +147,9 @@ def test_analyze_noise_and_dropout(
     monkeypatch, tmp_path, make_landmarks, capsys, dropout,
 ):
     landmarks = make_landmarks(300, 30, cadence_spm=170, noise=0.005, dropout=dropout)
-    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
     monkeypatch.setattr(
-        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
     )
     output = tmp_path / "report.json"
     main(["analyze", "x.mp4", "--out", str(output)])
@@ -165,3 +165,30 @@ def test_analyze_noise_and_dropout(
         message = "Pose detected in only 70% of frames; metrics may be unreliable"
         assert report["warnings"] == [message]
         assert summary.endswith(f"Warning: {message}\n")
+
+
+@pytest.mark.parametrize(
+    ("options", "host", "port", "model_name"),
+    [
+        ([], "127.0.0.1", 8000, None),
+        (["--host", "0.0.0.0", "--port", "9000", "--model", "pose.task"],
+         "0.0.0.0", 9000, "pose.task"),
+    ],
+)
+def test_serve(monkeypatch, capsys, options, host, port, model_name):
+    from pathlib import Path
+
+    calls = []
+
+    class App:
+        def run(self, **kwargs):
+            calls.append(kwargs)
+
+    def create_app(model):
+        assert model == (Path(model_name) if model_name else None)
+        return App()
+
+    monkeypatch.setattr("runform.cli.create_app", create_app)
+    main(["serve", *options])
+    assert calls == [{"host": host, "port": port}]
+    assert capsys.readouterr().out == f"Running Form Analyzer at http://{host}:{port}\n"
