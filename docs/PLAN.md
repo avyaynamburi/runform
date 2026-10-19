@@ -434,6 +434,41 @@ src/runform/
     - no console errors
 - Out of scope: API changes, new metrics.
 
+### W8 — Speed ramps: slow-mo on key moments, fast transitions
+- Goal: the tour uses speed ramps the way sports edits do. It speeds through camera moves and slows into the moments that matter: heel strikes, knee strikes and the peak of each bounce. A small speed marker appears while the speed is changing.
+- Files: `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`
+- Steps:
+  - **Rate model:** `baseRate` is the user's speed button (0.25/0.5/1×, default 0.5). Each frame computes a multiplier `m` from the phase, the scene, the scene time and frameIndex (look ahead 2 frames for event proximity). The target rate is `clamp(baseRate · m, 0.0625, 3)`. The applied rate eases toward the target (τ = 180 ms) and is written to `video.playbackRate` only when it changes by more than 0.01. Don't touch playbackRate while the video is paused (knee freeze); resume at the eased rate.
+  - **Multipliers** (use smoothstep for every ramp, never steps):
+    - **Scene transitions:** a bump to m = 3 (1.5× at default speed) across the last 600 ms of a scene and the first 700 ms of the next, peaking at the boundary.
+    - **Tour start (after the intro):** m ramps from 0.4 to 1 over 1.5 s.
+    - **Cadence:** slow-mo, m = 0.35, within ±3 frames of each **left** strike only, so each stride has one slow landing and one fast push-off.
+    - **Trunk lean:** steady at m = 0.8, a calm contrast.
+    - **Knee:** m eases from 1 to 0.3 over the 6 frames before each strike. The freeze happens as now, then m eases back from 0.3 to 1 over the next 6 frames.
+    - **Bounce:** m = 0.4 within ±3 frames of each stride `top` (for `strides[0].foot`), so the hips seem to hang at the peak.
+    - **Summary:** m eases up to 2 (1× at default) over 1 s.
+    - **Free mode:** m = 1.
+  - **Speed marker:**
+    - A small mono pill at the top right of the stage, just below the letterbox bar. It shows "SLOW-MO 0.18×" when the effective rate is below 0.6 · baseRate, and "1.5×"-style text otherwise.
+    - It fades in when |rate − baseRate| > 0.05 and fades out 600 ms after the rate settles.
+  - Add `rate` (the current video.playbackRate) to the debug hook.
+  - `prefers-reduced-motion`: m = 1 always, and no marker.
+  - **W7 layout fixes:**
+    - (a) Knee: the angle pill and the strike-history stack overlap. Put the pill on the facing side of the knee and the history on the opposite side, at least 16 px apart, and both clamped inside the safe area.
+    - (b) Lean dial: it's clipped by the top letterbox bar. Clamp every floating HUD (dial, rhythm strip, history, labels) to the safe area: the stage minus the letterbox bars, the lower-third region, and an 8 px margin.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - Lead checks in headless Chrome with the sample clip, sampling `rate` over time:
+    - cadence dips to about 0.18 near left strikes and returns to about 0.5
+    - transitions reach about 1.5
+    - knee eases into the freeze
+    - bounce dips near tops
+    - summary reaches about 1.0
+    - the marker is visible during a slow-mo
+    - the knee pill and history don't overlap, and the lean dial isn't clipped
+    - no console errors
+- Out of scope: API changes, audio.
+
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
