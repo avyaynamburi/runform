@@ -38,5 +38,6 @@ def test_pose_missing_frames(blank_video):
     frames, fps = read_frames(blank_video)
     landmarks = extract_landmarks(frames, fps, model=model)
     assert landmarks.fps == fps
+    assert landmarks.aspect == 1.0
     assert landmarks.data.shape == (10, 33, 3)
     assert np.isnan(landmarks.data).all()

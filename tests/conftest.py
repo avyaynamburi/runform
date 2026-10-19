@@ -8,11 +8,18 @@ from runform.landmarks import Landmarks
 
 @pytest.fixture
 def make_landmarks():
-    def make(n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False):
+    def make(
+        n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False,
+        lean_deg=0.0, aspect=1.0,
+    ):
         pose = np.full((33, 3), (0.5, 0.5, 1.0))
         for left, right, height in [(11, 12, 0.3), (23, 24, 0.5), (25, 26, 0.7), (27, 28, 0.9)]:
             pose[left] = (0.4, height, 1.0)
             pose[right] = (0.6, height, 1.0)
+        for ankle, heel, foot_index in [(27, 29, 31), (28, 30, 32)]:
+            pose[heel, 0] = pose[ankle, 0] - 0.01
+            pose[foot_index] = (pose[ankle, 0] + 0.03, 0.93, 1.0)
+        pose[[11, 12], 0] += np.tan(np.radians(lean_deg)) * (0.5 - 0.3) / aspect
         data = np.repeat(pose[None], n_frames, axis=0)
         if cadence_spm is not None:
             t = np.arange(n_frames) / fps
@@ -30,6 +37,6 @@ def make_landmarks():
         data[:, :, :2] += np.random.default_rng(seed).normal(
             0, noise, size=(n_frames, 33, 2)
         )
-        return Landmarks(data, fps)
+        return Landmarks(data, fps, aspect=aspect)
 
     return make

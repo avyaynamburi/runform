@@ -11,3 +11,4 @@ class Landmarks:
 
     data: np.ndarray
     fps: float
+    aspect: float = 1.0

@@ -44,4 +44,5 @@ def extract_landmarks(
             result = detector.detect_for_video(image, timestamp)
             if result.pose_landmarks:
                 data[index] = [(p.x, p.y, p.visibility) for p in result.pose_landmarks[0]]
-    return Landmarks(data=data, fps=fps)
+    aspect = frames[0].shape[1] / frames[0].shape[0] if frames else 1.0
+    return Landmarks(data=data, fps=fps, aspect=aspect)

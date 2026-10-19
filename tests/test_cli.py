@@ -1,6 +1,8 @@
 import json
+import warnings
 
 import numpy as np
+import pytest
 
 from runform.cli import main
 
@@ -23,12 +25,14 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     assert json.loads(output.read_text()) == {
         "fps": 25.0, "frames_total": 10, "frames_with_pose": 8,
         "strikes_detected": 0, "cadence_spm": None,
+        "trunk_lean_deg": 0.0,
     }
     summary = capsys.readouterr().out
     assert "FPS: 25" in summary
     assert "frames total: 10" in summary
     assert "frames with pose: 8" in summary
     assert "Cadence: unavailable" in summary
+    assert "Trunk lean: 0.0 deg" in summary
 
 
 def test_analyze_cadence(monkeypatch, tmp_path, make_landmarks, capsys):
@@ -56,3 +60,32 @@ def test_analyze_cadence_double_bump(monkeypatch, tmp_path, make_landmarks):
     main(["analyze", "x.mp4", "--out", str(output)])
     report = json.loads(output.read_text())
     assert abs(report["cadence_spm"] - 170) <= 3
+
+
+def test_analyze_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(10, 30, lean_deg=10, aspect=720 / 1008)
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    report = json.loads(output.read_text())
+    assert report["trunk_lean_deg"] == pytest.approx(10, abs=1)
+    assert f"Trunk lean: {report['trunk_lean_deg']} deg" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("n_frames", [0, 10])
+def test_analyze_no_pose_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsys, n_frames):
+    landmarks = make_landmarks(n_frames, 30)
+    landmarks.data[:] = np.nan
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        main(["analyze", "x.mp4", "--out", str(output)])
+    assert json.loads(output.read_text())["trunk_lean_deg"] is None
+    assert "Trunk lean: unavailable" in capsys.readouterr().out
