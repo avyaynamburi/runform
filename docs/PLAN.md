@@ -64,7 +64,7 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 | T2 | Cadence | done |
 | T2b | Cadence robust to double heel peaks | done |
 | T3 | Trunk lean | done |
-| T4 | Knee flexion at strike | todo |
+| T4 | Knee flexion at strike | done |
 | T5 | Vertical oscillation | todo |
 | T6 | Robustness: gaps and noise | todo |
 

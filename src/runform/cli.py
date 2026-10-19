@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from runform.gait import cadence, detect_foot_strikes
-from runform.metrics import trunk_lean
+from runform.metrics import knee_flexion_at_strikes, trunk_lean
 from runform.pose import extract_landmarks
 from runform.report import build_report
 from runform.video import read_frames
@@ -22,7 +22,10 @@ def main(argv: list[str] | None = None) -> None:
     frames, fps = read_frames(args.video)
     landmarks = extract_landmarks(frames, fps, model=args.model)
     strikes = detect_foot_strikes(landmarks)
-    report = build_report(landmarks, len(strikes), cadence(strikes, fps), trunk_lean(landmarks))
+    report = build_report(
+        landmarks, len(strikes), cadence(strikes, fps), trunk_lean(landmarks),
+        knee_flexion_at_strikes(landmarks, strikes),
+    )
     args.out.write_text(json.dumps(report, indent=2) + "\n")
     print(
         f"FPS: {report['fps']:g}; frames total: {report['frames_total']}; "
@@ -32,3 +35,6 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Cadence: {cadence_text} spm")
     lean_text = "unavailable" if report['trunk_lean_deg'] is None else report['trunk_lean_deg']
     print(f"Trunk lean: {lean_text} deg")
+    knee = report['knee_flexion_at_strike_deg']
+    knee_text = "unavailable" if knee is None else f"{knee['mean']} +/- {knee['std']}"
+    print(f"Knee at strike: {knee_text} deg")

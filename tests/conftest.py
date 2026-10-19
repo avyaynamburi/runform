@@ -10,7 +10,7 @@ from runform.landmarks import Landmarks
 def make_landmarks():
     def make(
         n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False,
-        lean_deg=0.0, aspect=1.0,
+        lean_deg=0.0, aspect=1.0, knee_deg=180.0,
     ):
         pose = np.full((33, 3), (0.5, 0.5, 1.0))
         for left, right, height in [(11, 12, 0.3), (23, 24, 0.5), (25, 26, 0.7), (27, 28, 0.9)]:
@@ -21,12 +21,19 @@ def make_landmarks():
             pose[foot_index] = (pose[ankle, 0] + 0.03, 0.93, 1.0)
         pose[[11, 12], 0] += np.tan(np.radians(lean_deg)) * (0.5 - 0.3) / aspect
         data = np.repeat(pose[None], n_frames, axis=0)
+        data[:, [25, 26], 0] += 0.2 * np.tan(np.radians((180 - knee_deg) / 2)) / aspect
         if cadence_spm is not None:
             t = np.arange(n_frames) / fps
             stride_seconds = 2 * 60 / cadence_spm
             for heel, phase in [(29, 0), (30, np.pi)]:
+                sine = np.sin(2 * np.pi * (cadence_spm / 2 / 60) * t + phase)
+                angles = knee_deg - 20 * (1 - sine)
+                knee = 25 if heel == 29 else 26
+                data[:, knee, 0] = (
+                    pose[knee, 0] + 0.2 * np.tan(np.radians((180 - angles) / 2)) / aspect
+                )
                 data[:, heel, 1] = (
-                    0.92 + 0.04 * np.sin(2 * np.pi * (cadence_spm / 2 / 60) * t + phase)
+                    0.92 + 0.04 * sine
                 )
                 if double_bump:
                     first_peak = (np.pi / 2 - phase) / (2 * np.pi) * stride_seconds

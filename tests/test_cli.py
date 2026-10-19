@@ -26,6 +26,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
         "fps": 25.0, "frames_total": 10, "frames_with_pose": 8,
         "strikes_detected": 0, "cadence_spm": None,
         "trunk_lean_deg": 0.0,
+        "knee_flexion_at_strike_deg": None,
     }
     summary = capsys.readouterr().out
     assert "FPS: 25" in summary
@@ -33,6 +34,39 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     assert "frames with pose: 8" in summary
     assert "Cadence: unavailable" in summary
     assert "Trunk lean: 0.0 deg" in summary
+    assert "Knee at strike: unavailable" in summary
+
+
+def test_analyze_knee_at_strike(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(300, 30, cadence_spm=170, knee_deg=165, aspect=720 / 1008)
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    knee = json.loads(output.read_text())["knee_flexion_at_strike_deg"]
+    assert knee["mean"] == pytest.approx(165, abs=2)
+    assert knee["std"] < 2
+    assert all(value == round(value, 1) for value in knee.values())
+    assert f"Knee at strike: {knee['mean']} +/- {knee['std']} deg" in capsys.readouterr().out
+
+
+def test_analyze_invalid_strike_knees(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(300, 30, cadence_spm=170)
+    landmarks.data[:, [25, 26], :2] = np.nan
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        main(["analyze", "x.mp4", "--out", str(output)])
+    report = json.loads(output.read_text())
+    assert report["strikes_detected"] > 0
+    assert report["knee_flexion_at_strike_deg"] is None
+    assert "Knee at strike: unavailable" in capsys.readouterr().out
 
 
 def test_analyze_cadence(monkeypatch, tmp_path, make_landmarks, capsys):
