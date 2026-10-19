@@ -294,11 +294,33 @@ src/runform/
   - Lead checks in headless Chrome with the sample clip: screenshots during each scene, and after the tour (live mode). Chip navigation works. No console errors.
 - Out of scope: the knee and vertical oscillation scenes (W4).
 
-### W4 — Guided tour: knee at strike + vertical oscillation (spec written when W3 is done)
-- Planned:
-  - **knee scene:** pauses briefly on each strike frame, draws the angle arc at the knee and shows its value.
-  - **vertical oscillation scene:** the hip midpoint leaves a glowing trail, with horizontal top and bottom guides per stride and a bracket showing the bounce as a percentage of body height.
-  - Then a final "summary" scene that leads into the stat cards.
+### W4 — Guided tour: knee at strike + vertical oscillation + summary
+- Goal: the tour gains three more scenes: knee at strike, vertical oscillation (the hips trace a glowing wave as they bounce) and a closing summary. That completes the web app.
+- Files: `src/runform/metrics.py`, `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_metrics.py`, `tests/test_web.py`
+- Steps:
+  - `metrics.py`: add `oscillation_strides(lm, strikes) -> list[Stride]`. `Stride` is a dataclass with `foot`, `start`, `end`, `top` (the frame where hip-mid y is smallest, i.e. highest), `bottom` (the frame where it's largest) and `value` (range / body height). It uses exactly the same windows and skipping rules as today. `vertical_oscillation` becomes `np.asarray([s.value for s in oscillation_strides(...)])`, so its behavior and tests don't change.
+  - API: `series` adds `knee_at_strike_deg`, aligned 1:1 with `strikes`. It's the landing-leg knee angle from `metrics.joint_angle` at each strike, rounded to 1 decimal, or null. The response adds `strides`: `[{"foot", "start", "end", "top", "bottom", "value"}]` with `value` rounded to 4 decimals.
+  - **Knee scene** (accent pink #f472b6):
+    - When playback crosses a strike frame, the video freezes on that exact frame for 1 s. Use a `freezeUntil` flag, separate from the user's play/pause, and seek to `(frame + 0.5) / fps`.
+    - Draw the landing leg's thigh and shank thick in pink, with an arc at the knee between them and a pill label giving that strike's angle (for example "158°").
+    - The arc and label stay visible and fade over the 15 frames after the strike.
+    - Freezes count toward the scene's 8 s timer.
+    - Caption: "At each foot strike we freeze the frame and measure the hip–knee–ankle angle of the landing leg. 180° would be a straight leg."
+  - **Vertical oscillation scene** (accent green #34d399):
+    - A trace of the hip midpoint over the last 60 frames, drawn as a seismograph. Frame i's point is at `x = hipX(now) − (frameIndex − i) · 4 px`, `y = hipY(i)`, so the bounce scrolls left as a glowing wave that fades toward its tail.
+    - For the stride containing frameIndex, choosing among strides of the first stride's foot, draw dashed horizontal guides at the hip y of its `top` and `bottom` frames.
+    - Draw a vertical bracket to the right of the runner between the two guides, with a pill label giving that stride's value as a percentage (for example "8.4% of body height").
+    - Caption: "We follow your hip midpoint through each stride. The gap between its highest and lowest point, divided by your shoulder-to-ankle height, is your vertical oscillation."
+  - **Summary scene** (no overlay, skeleton at full opacity):
+    - The card shows all four values in a compact 2×2 grid. Caption: "That's your stride. Scroll down for the full breakdown."
+    - When it ends, the tour goes to free live mode, as it does now.
+  - Chips: Cadence, Trunk lean, Knee, Bounce, Summary.
+- Acceptance:
+  - `ruff check . && pytest -q` and `node --check`.
+  - `test_metrics.py`: `oscillation_strides` on the existing hand-built stride fixture gives the correct top and bottom frames and values, and `vertical_oscillation` stays equal to the values from `oscillation_strides`.
+  - `test_web.py`: `knee_at_strike_deg` has the same length as `strikes`, and with the fixture `knee_deg=165` the values are about 165. `strides` values have the right length and the right top and bottom ordering. The fixture at `hip_amp=0.015` gives values of about 0.05.
+  - Lead checks in headless Chrome with the sample clip: screenshots of the knee freeze, the oscillation wave and the summary. No console errors.
+- Out of scope: new metrics, exporting or sharing, and any change to how the stat cards look.
 
 ## Later (not in MVP)
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
