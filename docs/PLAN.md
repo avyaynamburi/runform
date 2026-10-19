@@ -189,6 +189,70 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - `pytest` passes in full.
 - `runform analyze samples/side_run.mp4` (a clip the user adds) gives a cadence that matches a manual count from the video within ±5 spm. The user checks this by hand.
 
+## Phase 2: Web app
+
+Goal: `runform serve` starts a local web app. You upload a side-view running clip. The page plays the video with the detected skeleton drawn over it, then runs a guided "how it was measured" sequence for each stat, and ends on the stat cards.
+
+### Architecture
+```
+src/runform/
+  pipeline.py   # analyze(path, model=None) -> Analysis(report, raw, clean, strikes). Shared by the CLI and the web app.
+  web.py        # create_app(model=None) -> Flask app. GET / serves static/index.html; POST /api/analyze runs the pipeline.
+  static/
+    index.html  # single page: upload → processing → intro/explainers → results
+    style.css
+    app.js      # vanilla JS, no build step, no CDN. Canvas overlay on a <video> that plays the user's local file (object URL).
+```
+- The web app never sends the video back. The browser plays its own local copy, and the server returns only JSON.
+- All measuring stays in Python. The front end only draws what the API returns, so the web app and CLI can never disagree.
+- Look and feel: dark background, a neon-cyan skeleton with a soft glow, and one accent color per stat. Big numbers in a monospace font. Animations run on `requestAnimationFrame` and are synced to `video.currentTime`.
+
+### API: `POST /api/analyze` (multipart field `video`)
+- 200: `{"report": {...same dict as the CLI JSON...}, ...slice additions}`
+- 400 `{"error": ...}` when the file is missing. 422 `{"error": ...}` when the video can't be read or analyzed (ValueError from the pipeline).
+- The upload is saved to a temp file and deleted after analysis. `MAX_CONTENT_LENGTH` is 300 MB.
+
+### Testing web slices
+`tests/test_web.py` uses Flask's test client and monkeypatches `runform.pipeline.read_frames` and `runform.pipeline.extract_landmarks` with fixture data, the same way `test_cli.py` does. JS isn't unit-tested. Lead reviews it by launching `runform serve`, uploading `samples/side_run.mp4` in a real browser, and checking each scene.
+
+| Task | Slice | Status |
+|---|---|---|
+| W1 | Upload → stats cards | todo |
+| W2 | Skeleton overlay + draw-in intro | todo |
+| W3 | Explainers: cadence + trunk lean | todo |
+| W4 | Explainers: knee at strike + vertical oscillation; polish | todo |
+
+### W1 — Upload → stat cards
+- Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
+- Files: `pyproject.toml`, `src/runform/pipeline.py`, `src/runform/cli.py`, `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_cli.py`, `tests/test_web.py`
+- Steps:
+  - Add the `flask>=3.1` dependency. Add package data so `static/*` is included (`[tool.setuptools.package-data] runform = ["static/*"]`).
+  - `pipeline.py`: move the read → pose → fill_gaps/smooth → strikes → metrics → warnings → `build_report` sequence out of `cli.main` into `analyze(path, model=None) -> Analysis`. `Analysis` is a dataclass with `report`, `raw`, `clean` and `strikes`. Behavior doesn't change. `cli.py` calls it and keeps the text printing.
+  - `cli.py` gets a `serve` subcommand with `--host` (default 127.0.0.1), `--port` (default 8000) and `--model`. It prints the URL and calls `create_app(model).run(host, port)`.
+  - `test_cli.py`: retarget the monkeypatches to `runform.pipeline.*`. All existing assertions stay unchanged. Add a `serve` test that monkeypatches `runform.cli.create_app` and checks that host, port and model are passed through.
+  - Front end: a drop zone or file picker. On submit, POST with `fetch` and show an animated "Analyzing your stride…" state. Render the cards; null values show as "—". Show warnings as a banner. Show error responses as a message, and let the user upload again.
+- Acceptance:
+  - `pip install -e ".[dev]" && ruff check . && pytest -q`.
+  - `test_web.py`:
+    - GET `/` returns 200 HTML with a file input.
+    - POST with a fake file and a fixture at 170 spm returns a `report` whose `cadence_spm` is within ±3.
+    - With no file, the response is 400.
+    - When `read_frames` raises ValueError, the response is 422 with an `error`.
+    - The temp file is deleted afterwards.
+  - Lead checks: `runform serve`, then uploading `samples/side_run.mp4` in a browser, shows 180.0 spm.
+- Out of scope: video playback, skeleton, animations.
+
+### W2 — Skeleton overlay + intro (spec written when W1 is done)
+- Planned: the API adds `pose`, which has `fps`, `aspect` and `frames` (per frame, 33 `[x, y]` pairs rounded to 4 dp, `null` for missing points), taken from the cleaned landmarks. After analysis, the page plays the uploaded video with a canvas overlay. The intro draws the skeleton bone by bone with a glow, then tracks the runner live.
+
+### W3 / W4 — Stat explainers (specs written later)
+- Planned: the API adds `strikes`, per-frame trunk lean, per-strike knee angles, and per-stride hip-height windows. The guided scenes are:
+  - **cadence:** the feet flash at each strike while a step counter ticks and a metronome bar pulses
+  - **trunk lean:** a hip→shoulder line, a dashed vertical reference and a live angle arc
+  - **knee:** the video pauses on strike frames and draws the knee angle arc and value
+  - **vertical oscillation:** the hip point leaves a glowing trail, with horizontal top and bottom guide lines and a bracket showing the bounce
+  - Then the stat cards.
+
 ## Later (not in MVP)
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
 - Stream frames instead of holding the whole video in memory (`read_frames` returns a list).

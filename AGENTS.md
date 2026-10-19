@@ -19,6 +19,7 @@ Read by Codex and by the lead. Plan and task list: `docs/PLAN.md`.
 - Every task is a vertical slice. It runs end to end, from `runform analyze <video>` through to a value in the report, even if each layer does very little.
 - No layer-only tasks such as "write all of gait.py" or "add smoothing." A layer grows only when a slice needs it.
 - Every task's acceptance check includes a CLI-level test (`tests/test_cli.py`) proving the new output appears in the JSON report. Unit tests are extra, not a replacement.
+- Web tasks (W*) run end to end from upload to something visible in the page. Their acceptance check includes a `tests/test_web.py` case proving the new data appears in the `/api/analyze` response, plus Lead's own check in a real browser.
 - After every task, `runform analyze` still runs and `pytest` passes. `main` is never left broken.
 - When Lead writes a task spec, it confirms the slice touches the CLI, the pipeline, and the report. If it doesn't, Lead re-cuts the task.
 
