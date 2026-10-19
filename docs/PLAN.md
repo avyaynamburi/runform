@@ -242,8 +242,27 @@ src/runform/
   - Lead checks: `runform serve`, then uploading `samples/side_run.mp4` in a browser, shows 180.0 spm.
 - Out of scope: video playback, skeleton, animations.
 
-### W2 — Skeleton overlay + intro (spec written when W1 is done)
-- Planned: the API adds `pose`, which has `fps`, `aspect` and `frames` (per frame, 33 `[x, y]` pairs rounded to 4 dp, `null` for missing points), taken from the cleaned landmarks. After analysis, the page plays the uploaded video with a canvas overlay. The intro draws the skeleton bone by bone with a glow, then tracks the runner live.
+### W2 — Skeleton overlay + draw-in intro
+- Goal: after analysis, the page shows a video stage above the cards. Your clip plays with the detected skeleton drawn over it. The intro draws the skeleton in joint by joint and bone by bone, then it tracks you live.
+- Files: `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`
+- Steps:
+  - API: the `/api/analyze` response adds `pose`, which has `fps`, `aspect` and `frames`, built from `analysis.clean` by a small helper in web.py. `frames[i]` is `null` if every point in frame i is NaN. Otherwise it's a list of 33 `[x, y]` pairs rounded to 4 decimals, with `null` for an individual NaN point. Visibility isn't sent.
+  - Stage: a `<video>` (muted, playsinline, from `URL.createObjectURL(file)`; nothing is uploaded back) with a `<canvas>` exactly covering the video's rendered picture, accounting for letterboxing. It's sized for devicePixelRatio and resizes with the window.
+  - Frame sync: index = `floor(video.currentTime · fps)`, clamped. Drawing runs on `requestAnimationFrame`. When a frame is null, the skeleton fades out.
+  - Skeleton: bones are the shoulders, torso (11-23, 12-24), hips, arms (11-13-15, 12-14-16) and legs (23-25-27-29-31-27, 24-26-28-30-32-28). The left side is neon cyan (#22d3ee) and the right side violet (#a78bfa), so the two legs are easy to tell apart. Joints are small filled dots with a glow (`shadowBlur`).
+  - Intro (about 3 s, starting paused on the first frame with a pose):
+    1. The video dims behind a dark veil and a label "Tracking 33 body points…" appears.
+    2. Joints pop in with a stagger.
+    3. Bones draw outward from the torso, each stroke growing from one end to the other.
+    4. The veil lifts, the label changes to "Live tracking", and the video plays at 0.5× and loops.
+    With `prefers-reduced-motion`, skip straight to step 4.
+  - Controls under the stage: play/pause, speed (0.25× / 0.5× / 1×) and replay intro.
+  - Add an inline SVG favicon (a data URI in index.html) to stop the favicon 404.
+- Acceptance:
+  - `ruff check . && pytest -q`.
+  - `test_web.py`: the analyze response has `pose.fps == 30`, `pose.aspect` equal to the fixture's aspect, and `len(pose.frames) == n_frames`. An all-NaN frame becomes `null`. A single NaN point becomes `null` inside an otherwise valid frame. Values are rounded to 4 decimals.
+  - Lead checks in headless Chrome with the sample clip: screenshots mid-intro (partial skeleton), after the intro (full skeleton on the runner during playback), and at phone width. There must be no console errors.
+- Out of scope: stat explainers (W3/W4).
 
 ### W3 / W4 — Stat explainers (specs written later)
 - Planned: the API adds `strikes`, per-frame trunk lean, per-strike knee angles, and per-stride hip-height windows. The guided scenes are:
