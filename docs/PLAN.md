@@ -226,6 +226,8 @@ src/runform/
 | W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | done |
 | W8 | Speed ramps: slow-mo on key moments, fast transitions | done |
 | W9 | Locked framing per scene; tour ends on the summary | done |
+| W10 | Immersive fullscreen experience | todo |
+| W11 | Foot path vs. target path (+ overstride metric) | todo |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
@@ -494,6 +496,72 @@ src/runform/
     - 20 s after the summary starts, the scene is still `summary`, the lower-third is visible, and the video is still playing
     - no console errors
 - Out of scope: API changes.
+
+### W10 — Immersive fullscreen experience
+- Goal: once results arrive, the experience fills the whole browser window. The controls tuck into an auto-hiding bar, true fullscreen is one click (or the F key) away, and you can return to the page and the stat cards.
+- Files: `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`
+- Steps:
+  - **Overlay:** when the stage starts, it becomes a fixed overlay: `position: fixed; inset: 0; 100vw × 100dvh`, black, above the page, with the body's scroll locked. The camera, canvases and backdrop re-lay out to the new size through the existing resize path. The portrait clip is letterboxed by the camera as now, with the blurred backdrop filling the sides.
+  - **Control bar:**
+    - The chips, play/pause, speed buttons and replay intro move into a slim bottom bar inside the overlay. It has a dark translucent backing with a blur.
+    - It shows on pointer movement, tap or keyboard focus, and hides 2.5 s after the last activity (never while focus is inside it).
+    - While the bar is visible, the lower-third shifts up by the bar's height (with a transition), so they never overlap.
+  - **Top-right buttons:**
+    - **Fullscreen** toggles the Fullscreen API on the overlay element (the icon swaps; the F key does the same). Catch rejected promises quietly.
+    - **Close (×)** exits immersive mode (also Esc when not in browser fullscreen): the overlay returns to the inline stage, the scroll lock is released, and the page scrolls to the stat cards. Playback continues.
+    - The speed marker sits to the left of these buttons.
+  - **Summary:** the lower-third gets a "Full breakdown ↓" button that does the same as Close.
+  - **Hint:** at the start of the tour, show "Press F for full screen" as a small toast for 3 s (desktop only, i.e. a fine pointer).
+  - **Phone:** the overlay covers the whole viewport, and the bar is compact with horizontally scrollable chips.
+  - Reset and "Analyze another video" exit immersive mode and release the scroll lock.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - `test_web.py`: the index contains the overlay control bar, fullscreen and close buttons (by id).
+  - Lead checks in headless Chrome with the sample clip:
+    - the stage rect equals the viewport at 1280×900 and at 390×844
+    - the bar hides after about 2.5 s and reappears on mouse move
+    - the lower-third doesn't overlap the bar
+    - Close returns to the page with the cards visible
+    - "Full breakdown" works from the summary
+    - the fullscreen button raises no console errors
+- Out of scope: the foot path (W11).
+
+### W11 — Foot path vs. target path (+ overstride metric)
+- Goal: a new tour scene, "Foot path", traces the near-side ankle's loop relative to the hips and compares it with a target path in which the foot lands closer under the hips. A new `overstride_rel` metric appears in the CLI JSON and summary, the web report and the tour.
+- Honesty note: there's no single scientific "optimal" foot path. The target is **the runner's own average path, adjusted only near landing so the foot lands under the hips**, which addresses overstriding, the most widely used coaching cue. The UI caption says this plainly.
+- Files: `src/runform/metrics.py`, `src/runform/pipeline.py`, `src/runform/report.py`, `src/runform/cli.py`, `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/conftest.py`, `tests/test_metrics.py`, `tests/test_cli.py`, `tests/test_web.py`
+- Steps:
+  - `metrics.py`:
+    - `near_side(raw) -> "left" | "right"`: the side whose ankle, heel and foot index (27/29/31 vs 28/30/32) have the higher mean visibility over all frames. Ties go to "left".
+    - `foot_offsets(lm, side) -> (T, 2)`: per frame, the ankle relative to the hip midpoint in body heights: `x = (ankle_x − hip_x) · aspect · facing_sign / body_height` (forward positive) and `y = (hip_y − ankle_y) / body_height` (up positive).
+    - `overstride(lm, strikes, side) -> np.ndarray`: the x offset at each of that side's strike frames. NaN-safe; NaN values are dropped.
+    - `foot_path(lm, strikes, side, n=100) -> (actual, target) | None`: for each consecutive pair of that side's strikes, resample the offsets over [a, b] to n points (linear interpolation; skip windows with NaN). `actual` is the per-point median across strides; None if there are no strides. `target = actual`, but if `actual[0].x > LANDING_TARGET = 0.08`, shift x by `−(actual[0].x − 0.08) · w(i)` with `w(i) = exp(−(min(i, n − i) / 12)²)`, so the correction applies only around landing and fades by about 25% of the cycle.
+  - **Pipeline and report:** pipeline computes the near side and passes `overstride(clean, strikes, side)` to `build_report`. The report gains `overstride_rel` (mean rounded to 3 decimals, or null) and `near_side`. The CLI text summary gains "Overstride: 0.14 of body height ahead of hips" (or "unavailable"). `Analysis` gains `near_side`.
+  - **API:** `foot_path` = `{"side", "actual": [[x, y]…], "target": [[x, y]…], "landing_target": 0.08}`, with values rounded to 4 decimals, or null.
+  - **Tour scene "Foot path"** (id `foot-path`, chip "Foot path", accent: near-side color; inserted before summary, 9 s; locked framing on hips and legs 23–32 like knee; speed ramp m = 0.6 steady, plus a slow-mo of 0.35 within ±3 frames of near-side strikes):
+    - Draw the loops in-world, anchored at the current projected hip midpoint and scaled by the body height in pixels: `px = hipX + x · bhPx · facingSign`, `py = hipY − y · bhPx`.
+    - **Actual loop:** a solid 3 px line in the near-side color with a glow. **Target loop:** a dashed 2 px white line at alpha 0.85.
+    - A dot moves along the actual loop at the current gait phase (the fraction of the way from the last near-side strike to the next).
+    - At the landing points, a small arrow from the actual landing to the target landing, with a pill label: "lands {actual·100:.0f}% BH ahead → target 8%". If no correction was needed: "lands under hips ✓".
+    - The live ankle also leaves a fading trail over the last 0.7 s.
+    - Lower-third: label "05 · FOOT PATH", value "{overstride·100:.1f}% ahead", caption "Your ankle's path vs. a target that lands under your hips (dashed)." Summary becomes "06 · SUMMARY" and shows five values.
+  - **Fixture:** add `foot_swing=0.0`: when `cadence_spm` is set, add `foot_swing · sin(ωt + phase)` to x of that side's ankle, heel and foot index (so at strike the foot is `foot_swing` ahead). Add `near=None`: if "left" or "right", set the other side's 27–32 visibility to 0.6.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - Unit tests:
+    - `near_side` follows the visibility.
+    - `overstride` on a fixture with `foot_swing=0.05, near="left", aspect=720/1008` equals `((0.4 + 0.05) − 0.5) · aspect / 0.6` within 1e-3.
+    - `foot_path` actual[0].x ≈ overstride. Target x at index 0 is 0.08 when actual > 0.08, and target equals actual at index 50.
+    - None when there are no strides.
+  - CLI test: `overstride_rel` and `near_side` are in the JSON, and the summary line is printed.
+  - Web test: `foot_path` has 100-point actual and target arrays.
+  - Lead checks in headless Chrome with the sample clip:
+    - the foot-path scene shows both loops anchored at the hips
+    - the dot moves along the loop
+    - the landing arrow and label are readable
+    - the summary shows five values
+    - no console errors
+- Out of scope: other "optimal" references, absolute units.
 
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
