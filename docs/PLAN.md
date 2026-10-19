@@ -157,9 +157,17 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Out of scope: other joint angles, smoothing, and peak knee flexion in swing.
 
 ### T5 — Vertical oscillation
-- Goal: the report gains `vertical_oscillation_rel`, the bounce per stride divided by body height.
+- Goal: the report gains `vertical_oscillation_rel`: the mean, over strides, of the peak-to-trough range of hip-mid y, divided by body height. It's rounded to 3 decimals, or null when there are no strides.
 - Files: `src/runform/metrics.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_metrics.py`, `tests/test_cli.py`
-- Acceptance: `ruff check . && pytest -q`. The fixture's hip amplitude comes back within ±10%.
+- Steps:
+  - `vertical_oscillation(lm, strikes) -> np.ndarray`: one value per stride. A stride is the frame window `[a, b]` between two consecutive strikes of the *same* foot, using both feet. For each one: (nanmax − nanmin of hip-mid y in the window) / body height. Body height is the median over frames of (ankle-mid y − shoulder-mid y), the same as in `gait.py`; a small private helper in metrics.py is fine. Skip windows with no valid hip data. Only y is used, so aspect doesn't matter.
+  - The report takes the mean. The text summary gains a line.
+  - Fixture: add `hip_amp=0.0`. When `cadence_spm` is set, add `hip_amp · sin(2 · ω · t)` (twice per stride, one bounce per step) to the y of the shoulders and hips (11, 12, 23, 24) only. Expected value: `2 · hip_amp / 0.6`.
+- Acceptance:
+  - `ruff check . && pytest -q`.
+  - CLI test: `cadence_spm=170, hip_amp=0.015` gives 0.05 ± 10%. The static-pose CLI test asserts null.
+  - `test_metrics.py`: hand-built strikes check the per-stride windows: a bigger bounce in one stride shows up only in that stride's value. No strikes, or only one strike per foot, gives an empty array.
+- Out of scope: smoothing (T6) and absolute units.
 
 ### T6 — Robustness: gaps and noise
 - Goal: the pipeline handles dropped detections and jitter. The report gains a `warnings` list, for example a warning when under 80% of frames have a pose.
