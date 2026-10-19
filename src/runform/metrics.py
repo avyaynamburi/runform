@@ -1,21 +1,33 @@
 """Running form angles from normalized pose coordinates."""
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from runform.gait import Strike
 from runform.landmarks import Landmarks
 
 
-def vertical_oscillation(lm: Landmarks, strikes: list[Strike]) -> np.ndarray:
+@dataclass
+class Stride:
+    foot: str
+    start: int
+    end: int
+    top: int
+    bottom: int
+    value: float
+
+
+def oscillation_strides(lm: Landmarks, strikes: list[Strike]) -> list[Stride]:
     shoulder_y = lm.data[:, [11, 12], 1].mean(axis=1)
     ankle_y = lm.data[:, [27, 28], 1].mean(axis=1)
     heights = ankle_y - shoulder_y
     heights = heights[np.isfinite(heights)]
     if not len(heights):
-        return np.array([])
+        return []
     body_height = float(np.median(heights))
     if body_height <= 0:
-        return np.array([])
+        return []
 
     hip_y = lm.data[:, [23, 24], 1].mean(axis=1)
     values = []
@@ -23,10 +35,18 @@ def vertical_oscillation(lm: Landmarks, strikes: list[Strike]) -> np.ndarray:
         frames = sorted(strike.frame for strike in strikes if strike.foot == foot)
         for a, b in zip(frames, frames[1:], strict=False):
             window = hip_y[a:b + 1]
-            window = window[np.isfinite(window)]
-            if len(window):
-                values.append((window.max() - window.min()) / body_height)
-    return np.asarray(values)
+            if np.isfinite(window).any():
+                window = np.where(np.isfinite(window), window, np.nan)
+                top, bottom = int(np.nanargmin(window)), int(np.nanargmax(window))
+                values.append(Stride(
+                    foot, a, b, a + top, a + bottom,
+                    float((window[bottom] - window[top]) / body_height),
+                ))
+    return values
+
+
+def vertical_oscillation(lm: Landmarks, strikes: list[Strike]) -> np.ndarray:
+    return np.asarray([s.value for s in oscillation_strides(lm, strikes)])
 
 
 def joint_angle(

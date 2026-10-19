@@ -17,7 +17,9 @@ def test_index_and_static():
 
 
 def test_analyze_upload(monkeypatch, make_landmarks):
-    landmarks = make_landmarks(300, 30, cadence_spm=170, hip_amp=0.015, aspect=720 / 1008)
+    landmarks = make_landmarks(
+        300, 30, cadence_spm=170, hip_amp=0.015, knee_deg=165, aspect=720 / 1008,
+    )
     paths = []
     model = Path("custom.task")
     frames = [object()]
@@ -47,6 +49,15 @@ def test_analyze_upload(monkeypatch, make_landmarks):
     assert report["vertical_oscillation_rel"] == pytest.approx(0.05, abs=0.005)
     assert report["frames_with_pose"] == report["frames_total"] == 300
     assert report["warnings"] == []
+    knee = response.json["series"]["knee_at_strike_deg"]
+    assert len(knee) == len(response.json["strikes"])
+    assert knee == pytest.approx([165] * len(knee), abs=2)
+    strides = response.json["strides"]
+    assert strides
+    for stride in strides:
+        assert stride["start"] <= stride["top"] <= stride["end"]
+        assert stride["start"] <= stride["bottom"] <= stride["end"]
+        assert stride["value"] == pytest.approx(.05, rel=.1)
     pose = response.json["pose"]
     assert pose["fps"] == 30
     assert pose["aspect"] == 720 / 1008
@@ -141,6 +152,7 @@ def test_analyze_measurement_tour(monkeypatch, make_landmarks):
 
     clean = make_landmarks(5, 30, lean_deg=10, aspect=720 / 1008)
     clean.data[2] = np.nan
+    clean.data[1, 25, :2] = np.nan
     strikes = [Strike(1, "left"), Strike(4, "right")]
     analysis = Analysis({"warnings": []}, clean, clean, strikes)
     monkeypatch.setattr("runform.pipeline.analyze", lambda *args, **kwargs: analysis)
@@ -155,3 +167,8 @@ def test_analyze_measurement_tour(monkeypatch, make_landmarks):
     assert len(series) == len(clean.data)
     assert series[2] is None
     assert [value for value in series if value is not None] == pytest.approx([10] * 4)
+
+    knees = response.json["series"]["knee_at_strike_deg"]
+    assert len(knees) == len(strikes)
+    assert knees[0] is None
+    assert knees[1] == pytest.approx(180)

@@ -76,3 +76,10 @@ button:disabled { opacity: .45; cursor: default; }
   .video-stage.has-scene { margin-bottom: 210px; }
   #scene-card { top: 100%; left: 0; width: 100%; margin-top: 10px; min-height: 190px; }
 }
+
+#scene-value { color: var(--scene-accent, #e4faff); }
+#scene-progress-fill { background: var(--scene-accent, #22d3ee); }
+#scene-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; margin: 12px 0; }
+#scene-summary small { display: block; color: #acbbc8; font-size: 10px; margin-bottom: 4px; }
+#scene-summary strong { display: block; font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
+#scene-chips { flex-wrap: wrap; }

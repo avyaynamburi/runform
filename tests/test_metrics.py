@@ -8,6 +8,7 @@ from runform.metrics import (
     facing_sign,
     joint_angle,
     knee_flexion_at_strikes,
+    oscillation_strides,
     trunk_lean,
     vertical_oscillation,
 )
@@ -22,6 +23,14 @@ def test_vertical_oscillation_stride_windows(make_landmarks):
         Strike(8, "left"), Strike(0, "right"), Strike(0, "left"),
         Strike(4, "left"), Strike(4, "right"),
     ]
+    strides = oscillation_strides(landmarks, strikes)
+    assert [(s.foot, s.start, s.end, s.top, s.bottom) for s in strides] == [
+        ("left", 0, 4, 0, 2), ("left", 4, 8, 4, 6), ("right", 0, 4, 0, 2),
+    ]
+    np.testing.assert_allclose([s.value for s in strides], np.array([.02, .06, .02]) / .6)
+    np.testing.assert_array_equal(
+        vertical_oscillation(landmarks, strikes), [s.value for s in strides],
+    )
     np.testing.assert_allclose(
         vertical_oscillation(landmarks, strikes), np.array([0.02, 0.06, 0.02]) / 0.6,
     )
@@ -48,6 +57,8 @@ def test_vertical_oscillation_missing_hips(make_landmarks):
     landmarks.data[:3, [23, 24], 1] = np.nan
     landmarks.data[4, [23, 24], 1] = 0.56
     strikes = [Strike(0, "left"), Strike(2, "left"), Strike(4, "left")]
+    stride, = oscillation_strides(landmarks, strikes)
+    assert (stride.start, stride.end, stride.top, stride.bottom) == (2, 4, 3, 4)
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         np.testing.assert_allclose(vertical_oscillation(landmarks, strikes), [0.1])

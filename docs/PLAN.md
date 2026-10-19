@@ -220,7 +220,7 @@ src/runform/
 | W1 | Upload → stats cards | done |
 | W2 | Skeleton overlay + draw-in intro | done |
 | W3 | Explainers: cadence + trunk lean | done |
-| W4 | Explainers: knee at strike + vertical oscillation; polish | todo |
+| W4 | Explainers: knee at strike + vertical oscillation; polish | done |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
@@ -323,6 +323,7 @@ src/runform/
 - Out of scope: new metrics, exporting or sharing, and any change to how the stat cards look.
 
 ## Later (not in MVP)
+- `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
 - Stream frames instead of holding the whole video in memory (`read_frames` returns a list).
 - Download the pose model atomically (temp file, then rename) so an interrupted download can't leave a corrupt cache.

@@ -1,5 +1,6 @@
 """Local upload interface for running form analysis."""
 
+from dataclasses import asdict
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -42,14 +43,25 @@ def create_app(model: str | Path | None = None) -> Flask:
         try:
             video.save(tmp_path)
             analysis = pipeline.analyze(tmp_path, model=model)
+            knee_angles = []
+            for strike in analysis.strikes:
+                indices = (23, 25, 27) if strike.foot == "left" else (24, 26, 28)
+                hip, knee, ankle = analysis.clean.data[strike.frame, indices, :2]
+                value = metrics.joint_angle(hip, knee, ankle, aspect=analysis.clean.aspect)
+                knee_angles.append(None if np.isnan(value) else round(float(value), 1))
+            strides = [
+                {**asdict(stride), "value": round(stride.value, 4)}
+                for stride in metrics.oscillation_strides(analysis.clean, analysis.strikes)
+            ]
             return jsonify(
+                strides=strides,
                 report=analysis.report, pose=_pose_payload(analysis.clean),
                 strikes=[{"frame": int(strike.frame), "foot": strike.foot}
                          for strike in analysis.strikes],
                 series={"trunk_lean_deg": [
                     None if np.isnan(value) else round(float(value), 1)
                     for value in metrics.trunk_lean(analysis.clean)
-                ]},
+                ], "knee_at_strike_deg": knee_angles},
             )
         except ValueError as exc:
             return jsonify(error=str(exc)), 422
