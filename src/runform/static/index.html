@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Running Form Analyzer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%230b0f14%27/%3E%3Cpath d=%27M8 25V7h9a6 6 0 0 1 0 12H8m9 0 7 6%27 fill=%27none%27 stroke=%27%2322d3ee%27 stroke-width=%273%27/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
 </head>
@@ -31,10 +32,24 @@
       <p>Following your movement, one frame at a time. This can take about 25 seconds.</p>
     </section>
     <p id="error" class="error" role="alert" hidden></p>
-    <!-- Results are separate so a video and canvas stage can be added here later. -->
     <section id="results" hidden aria-labelledby="results-title">
       <div class="results-header"><div><p class="eyebrow">YOUR MOVEMENT, MEASURED</p><h2 id="results-title">Stride overview</h2></div><button id="reset" type="button">Analyze another video <span aria-hidden="true">↗</span></button></div>
       <div id="warnings" class="warnings" role="status" hidden></div>
+      <div class="video-stage" id="video-stage">
+        <video id="runner-video" muted playsinline loop preload="auto" aria-label="Your running clip"></video>
+        <div id="intro-veil" class="intro-veil"></div>
+        <canvas id="skeleton" aria-hidden="true"></canvas>
+        <p id="tracking-label" role="status">Tracking 33 body points...</p>
+      </div>
+      <div class="stage-controls">
+        <button id="play-pause" type="button" disabled>Play</button>
+        <div class="speed-control" role="group" aria-label="Playback speed">
+          <button type="button" data-speed="0.25" aria-pressed="false">0.25x</button>
+          <button type="button" data-speed="0.5" aria-pressed="true">0.5x</button>
+          <button type="button" data-speed="1" aria-pressed="false">1x</button>
+        </div>
+        <button id="replay-intro" type="button" disabled>Replay intro</button>
+      </div>
       <div id="cards" class="cards"></div>
     </section>
     <footer>RUNFORM <span>Small details. A clearer picture.</span></footer>

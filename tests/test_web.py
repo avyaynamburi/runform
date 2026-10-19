@@ -1,6 +1,7 @@
 import io
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from runform.web import create_app
@@ -16,7 +17,7 @@ def test_index_and_static():
 
 
 def test_analyze_upload(monkeypatch, make_landmarks):
-    landmarks = make_landmarks(300, 30, cadence_spm=170, hip_amp=0.015)
+    landmarks = make_landmarks(300, 30, cadence_spm=170, hip_amp=0.015, aspect=720 / 1008)
     paths = []
     model = Path("custom.task")
     frames = [object()]
@@ -46,6 +47,12 @@ def test_analyze_upload(monkeypatch, make_landmarks):
     assert report["vertical_oscillation_rel"] == pytest.approx(0.05, abs=0.005)
     assert report["frames_with_pose"] == report["frames_total"] == 300
     assert report["warnings"] == []
+    pose = response.json["pose"]
+    assert pose["fps"] == 30
+    assert pose["aspect"] == 720 / 1008
+    assert len(pose["frames"]) == 300
+    assert len(pose["frames"][0]) == 33
+    assert len(pose["frames"][0][11]) == 2
     assert len(paths) == 1
     assert not paths[0].exists()
 
@@ -96,3 +103,33 @@ def test_unexpected_failure_cleanup(monkeypatch):
 
 def test_upload_limit():
     assert create_app().config["MAX_CONTENT_LENGTH"] == 300 * 1024 * 1024
+
+
+def test_analyze_pose_missing_points_and_rounding(monkeypatch, make_landmarks):
+    from runform.pipeline import Analysis
+
+    clean = make_landmarks(3, 30, aspect=720 / 1008)
+    clean.data[0] = np.nan
+    clean.data[1, 11, 0] = np.nan
+    clean.data[1, 12, 1] = np.nan
+    clean.data[1, 13] = [0.1234567, 0.7654321, np.nan]
+    clean.data[2, 14] = [0.9876543, 0.1111111, 0.9]
+    report = {"warnings": [], "frames_total": 3}
+    monkeypatch.setattr(
+        "runform.pipeline.analyze", lambda *args, **kwargs:
+        Analysis(report, clean, clean, []),
+    )
+    response = create_app().test_client().post(
+        "/api/analyze", data={"video": (io.BytesIO(b"fake"), "run.mp4")},
+    )
+    assert response.status_code == 200
+    assert response.json["report"] == report
+    pose = response.json["pose"]
+    assert pose["fps"] == 30
+    assert pose["aspect"] == 720 / 1008
+    assert len(pose["frames"]) == 3
+    assert pose["frames"][0] is None
+    assert pose["frames"][1][11] is None
+    assert pose["frames"][1][12] is None
+    assert pose["frames"][1][13] == [0.1235, 0.7654]
+    assert pose["frames"][2][14] == [0.9877, 0.1111]

@@ -3,9 +3,25 @@
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import numpy as np
 from flask import Flask, jsonify, request
 
 from runform import pipeline
+from runform.landmarks import Landmarks
+
+
+def _pose_payload(landmarks: Landmarks) -> dict:
+    frames = []
+    for frame in landmarks.data:
+        if np.isnan(frame).all():
+            frames.append(None)
+        else:
+            frames.append([
+                None if np.isnan(point[:2]).any() else
+                [round(float(point[0]), 4), round(float(point[1]), 4)]
+                for point in frame
+            ])
+    return {"fps": landmarks.fps, "aspect": landmarks.aspect, "frames": frames}
 
 
 def create_app(model: str | Path | None = None) -> Flask:
@@ -26,7 +42,7 @@ def create_app(model: str | Path | None = None) -> Flask:
         try:
             video.save(tmp_path)
             analysis = pipeline.analyze(tmp_path, model=model)
-            return jsonify(report=analysis.report)
+            return jsonify(report=analysis.report, pose=_pose_payload(analysis.clean))
         except ValueError as exc:
             return jsonify(error=str(exc)), 422
         finally:
