@@ -66,7 +66,7 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 | T3 | Trunk lean | done |
 | T4 | Knee flexion at strike | done |
 | T5 | Vertical oscillation | done |
-| T6 | Robustness: gaps and noise | todo |
+| T6 | Robustness: gaps and noise | done |
 
 ### T1 — Walking skeleton: frame counts end to end
 - Goal: `runform analyze clip.mp4 --out r.json` reads the video, runs pose, and writes `{fps, frames_total, frames_with_pose}`. It also prints a text summary.
@@ -182,7 +182,7 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Acceptance:
   - `ruff check . && pytest -q`. All existing tests keep their current tolerances.
   - CLI test: `cadence_spm=170, noise=0.005, dropout=0.1` (300 frames, 30 fps) gives cadence within ±3 and `warnings == []`. With `dropout=0.3`, the warning is present.
-  - `test_smoothing.py`: a 3-frame gap is filled linearly and a 6-frame gap is not. Leading NaNs stay NaN. Smoothing reduces the std of a noisy constant signal by at least 2×. A pure 2.83 Hz sine at 30 fps keeps ≥95% of its peak-to-peak. The input object is unchanged.
+  - `test_smoothing.py`: a 3-frame gap is filled linearly and a 6-frame gap is not. Leading NaNs stay NaN. Smoothing reduces the std of a noisy constant signal by at least 2× at 100 fps. (At 30 fps the 5-frame window can only reach about 1.4–1.7×, so 2× was never possible there; Lead's spec error.) A pure 2.83 Hz sine at 30 fps keeps ≥95% of its peak-to-peak. The input object is unchanged.
 - Out of scope: the visibility threshold, outlier rejection, and refactoring gait.py's internal moving average.
 
 ### Done when
@@ -190,7 +190,7 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - `runform analyze samples/side_run.mp4` (a clip the user adds) gives a cadence that matches a manual count from the video within ±5 spm. The user checks this by hand.
 
 ## Later (not in MVP)
-- Deduplicate the body-height computation in `gait.py` and `metrics.py`.
+- Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
 - Stream frames instead of holding the whole video in memory (`read_frames` returns a list).
 - Download the pose model atomically (temp file, then rename) so an interrupted download can't leave a corrupt cache.
 - An annotated output video with the skeleton and angles drawn on it.

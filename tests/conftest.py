@@ -10,7 +10,7 @@ from runform.landmarks import Landmarks
 def make_landmarks():
     def make(
         n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False,
-        lean_deg=0.0, aspect=1.0, knee_deg=180.0, hip_amp=0.0,
+        lean_deg=0.0, aspect=1.0, knee_deg=180.0, hip_amp=0.0, dropout=0.0,
     ):
         pose = np.full((33, 3), (0.5, 0.5, 1.0))
         for left, right, height in [(11, 12, 0.3), (23, 24, 0.5), (25, 26, 0.7), (27, 28, 0.9)]:
@@ -46,6 +46,10 @@ def make_landmarks():
         data[:, :, :2] += np.random.default_rng(seed).normal(
             0, noise, size=(n_frames, 33, 2)
         )
+        dropped = np.random.default_rng(seed).choice(
+            n_frames, size=round(dropout * n_frames), replace=False,
+        )
+        data[dropped] = np.nan
         return Landmarks(data, fps, aspect=aspect)
 
     return make

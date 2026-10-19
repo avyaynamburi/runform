@@ -10,8 +10,10 @@ def build_report(
     trunk_lean_deg: np.ndarray,
     knee_flexion_at_strike_deg: np.ndarray,
     vertical_oscillation_rel: np.ndarray,
-) -> dict[str, float | int | dict[str, float] | None]:
+    warnings: list[str],
+) -> dict[str, float | int | dict[str, float] | list[str] | None]:
     return {
+        "warnings": warnings,
         "fps": float(landmarks.fps),
         "frames_total": len(landmarks.data),
         "frames_with_pose": int(np.isfinite(landmarks.data).all(axis=(1, 2)).sum()),

@@ -4,10 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
+
 from runform.gait import cadence, detect_foot_strikes
 from runform.metrics import knee_flexion_at_strikes, trunk_lean, vertical_oscillation
 from runform.pose import extract_landmarks
 from runform.report import build_report
+from runform.smoothing import fill_gaps, smooth
 from runform.video import read_frames
 
 
@@ -21,11 +24,20 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     frames, fps = read_frames(args.video)
     landmarks = extract_landmarks(frames, fps, model=args.model)
-    strikes = detect_foot_strikes(landmarks)
+    clean = smooth(fill_gaps(landmarks))
+    frames_total = len(landmarks.data)
+    frames_with_pose = int(np.isfinite(landmarks.data).all(axis=(1, 2)).sum())
+    warnings = []
+    if frames_total > 0 and frames_with_pose / frames_total < 0.8:
+        pct = 100 * frames_with_pose / frames_total
+        warnings.append(
+            f"Pose detected in only {pct:.0f}% of frames; metrics may be unreliable"
+        )
+    strikes = detect_foot_strikes(clean)
     report = build_report(
-        landmarks, len(strikes), cadence(strikes, fps), trunk_lean(landmarks),
-        knee_flexion_at_strikes(landmarks, strikes),
-        vertical_oscillation(landmarks, strikes),
+        landmarks, len(strikes), cadence(strikes, fps), trunk_lean(clean),
+        knee_flexion_at_strikes(clean, strikes),
+        vertical_oscillation(clean, strikes), warnings,
     )
     args.out.write_text(json.dumps(report, indent=2) + "\n")
     print(
@@ -44,3 +56,5 @@ def main(argv: list[str] | None = None) -> None:
         "unavailable" if oscillation is None else f"{oscillation} of body height"
     )
     print(f"Vertical oscillation: {oscillation_text}")
+    for warning in warnings:
+        print(f"Warning: {warning}")

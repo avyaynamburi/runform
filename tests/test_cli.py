@@ -28,6 +28,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
         "trunk_lean_deg": 0.0,
         "knee_flexion_at_strike_deg": None,
         "vertical_oscillation_rel": None,
+        "warnings": [],
     }
     summary = capsys.readouterr().out
     assert "FPS: 25" in summary
@@ -139,3 +140,28 @@ def test_analyze_no_pose_trunk_lean(monkeypatch, tmp_path, make_landmarks, capsy
         main(["analyze", "x.mp4", "--out", str(output)])
     assert json.loads(output.read_text())["trunk_lean_deg"] is None
     assert "Trunk lean: unavailable" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("dropout", [0.1, 0.3])
+def test_analyze_noise_and_dropout(
+    monkeypatch, tmp_path, make_landmarks, capsys, dropout,
+):
+    landmarks = make_landmarks(300, 30, cadence_spm=170, noise=0.005, dropout=dropout)
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    report = json.loads(output.read_text())
+    assert abs(report["cadence_spm"] - 170) <= 3
+    assert report["frames_total"] == 300
+    assert report["frames_with_pose"] == 300 - round(dropout * 300)
+    summary = capsys.readouterr().out
+    if dropout == 0.1:
+        assert report["warnings"] == []
+        assert "Warning:" not in summary
+    else:
+        message = "Pose detected in only 70% of frames; metrics may be unreliable"
+        assert report["warnings"] == [message]
+        assert summary.endswith(f"Warning: {message}\n")
