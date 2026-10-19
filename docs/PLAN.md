@@ -60,7 +60,7 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 
 | Task | Slice | Status |
 |---|---|---|
-| T1 | Walking skeleton: frame counts | todo |
+| T1 | Walking skeleton: frame counts | done |
 | T2 | Cadence | todo |
 | T3 | Trunk lean | todo |
 | T4 | Knee flexion at strike | todo |
