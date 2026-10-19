@@ -219,7 +219,7 @@ src/runform/
 |---|---|---|
 | W1 | Upload → stats cards | done |
 | W2 | Skeleton overlay + draw-in intro | done |
-| W3 | Explainers: cadence + trunk lean | todo |
+| W3 | Explainers: cadence + trunk lean | done |
 | W4 | Explainers: knee at strike + vertical oscillation; polish | todo |
 
 ### W1 — Upload → stat cards

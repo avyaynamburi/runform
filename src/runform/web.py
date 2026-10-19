@@ -6,7 +6,7 @@ from tempfile import NamedTemporaryFile
 import numpy as np
 from flask import Flask, jsonify, request
 
-from runform import pipeline
+from runform import metrics, pipeline
 from runform.landmarks import Landmarks
 
 
@@ -42,7 +42,15 @@ def create_app(model: str | Path | None = None) -> Flask:
         try:
             video.save(tmp_path)
             analysis = pipeline.analyze(tmp_path, model=model)
-            return jsonify(report=analysis.report, pose=_pose_payload(analysis.clean))
+            return jsonify(
+                report=analysis.report, pose=_pose_payload(analysis.clean),
+                strikes=[{"frame": int(strike.frame), "foot": strike.foot}
+                         for strike in analysis.strikes],
+                series={"trunk_lean_deg": [
+                    None if np.isnan(value) else round(float(value), 1)
+                    for value in metrics.trunk_lean(analysis.clean)
+                ]},
+            )
         except ValueError as exc:
             return jsonify(error=str(exc)), 422
         finally:

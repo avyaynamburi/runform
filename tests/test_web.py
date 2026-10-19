@@ -133,3 +133,25 @@ def test_analyze_pose_missing_points_and_rounding(monkeypatch, make_landmarks):
     assert pose["frames"][1][12] is None
     assert pose["frames"][1][13] == [0.1235, 0.7654]
     assert pose["frames"][2][14] == [0.9877, 0.1111]
+
+
+def test_analyze_measurement_tour(monkeypatch, make_landmarks):
+    from runform.gait import Strike
+    from runform.pipeline import Analysis
+
+    clean = make_landmarks(5, 30, lean_deg=10, aspect=720 / 1008)
+    clean.data[2] = np.nan
+    strikes = [Strike(1, "left"), Strike(4, "right")]
+    analysis = Analysis({"warnings": []}, clean, clean, strikes)
+    monkeypatch.setattr("runform.pipeline.analyze", lambda *args, **kwargs: analysis)
+    response = create_app().test_client().post(
+        "/api/analyze", data={"video": (io.BytesIO(b"fake"), "run.mp4")},
+    )
+    assert response.status_code == 200
+    assert response.json["strikes"] == [
+        {"frame": strike.frame, "foot": strike.foot} for strike in analysis.strikes
+    ]
+    series = response.json["series"]["trunk_lean_deg"]
+    assert len(series) == len(clean.data)
+    assert series[2] is None
+    assert [value for value in series if value is not None] == pytest.approx([10] * 4)

@@ -83,7 +83,9 @@ async function upload(file) {
     }
     const payload = await response.json();
     renderResults(payload.report);
-    startStage(file, payload.pose);
+    startStage(file, payload);
+    processing.hidden = true;
+    document.querySelector("#video-stage").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (failure) {
     renderError(failure.message || "Connection failed. Please try again.");
   } finally {
@@ -133,15 +135,140 @@ let pictureWidth = 0;
 let pictureHeight = 0;
 let firstFrame = 0;
 let seekReady = false;
+let scene = null;
+let sceneElapsed = 0;
+let measurement = null;
+const sceneCard = document.querySelector("#scene-card");
+const stepCounter = document.querySelector("#step-counter");
+const progressFill = document.querySelector("#scene-progress-fill");
+const sceneChips = document.querySelector("#scene-chips");
+const metricValue = (value, unit) => value == null ? "—" : `${value.toFixed(1)}${unit}`;
+const scenes = [
+  {
+    id: "cadence", title: "Cadence",
+    value: report => metricValue(report.cadence_spm, " spm"),
+    caption: "Every time a heel hits its lowest point, that's a foot strike. The median time between strikes of the same foot gives your cadence.",
+    draw: drawCadence
+  },
+  {
+    id: "trunk-lean", title: "Trunk lean",
+    value: report => metricValue(report.trunk_lean_deg, "°"),
+    caption: "The angle between your hip-to-shoulder line and vertical, averaged over every frame.",
+    draw: drawTrunkLean
+  }
+];
+scenes.forEach(item => {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.textContent = item.title;
+  chip.dataset.scene = item.id;
+  chip.setAttribute("aria-pressed", "false");
+  chip.disabled = true;
+  chip.addEventListener("click", () => startScene(item));
+  sceneChips.append(chip);
+});
+
+function startScene(next) {
+  scene = next;
+  sceneElapsed = 0;
+  sceneCard.hidden = !scene;
+  document.querySelector("#video-stage").classList.toggle("has-scene", !!scene);
+  label.hidden = !!scene;
+  stepCounter.hidden = scene?.id !== "cadence";
+  progressFill.style.width = "0%";
+  sceneChips.querySelectorAll("button").forEach(chip => {
+    chip.setAttribute("aria-pressed", String(chip.dataset.scene === scene?.id));
+  });
+  if (scene) {
+    document.querySelector("#scene-title").textContent = scene.title;
+    document.querySelector("#scene-value").textContent = scene.value(measurement.report);
+    document.querySelector("#scene-caption").textContent = scene.caption;
+    setSpeed(0.5);
+  }
+}
+
+function drawCadence(ctx, frame, index) {
+  const strikes = measurement.strikes;
+  stepCounter.textContent = `Steps: ${strikes.filter(strike => strike.frame <= index).length}`;
+  strikes.forEach(strike => {
+    const age = index - strike.frame;
+    const heel = frame?.[strike.foot === "left" ? 29 : 30];
+    if (age < 0 || age > 12 || !heel) return;
+    ctx.globalAlpha = 1 - age / 13;
+    ctx.strokeStyle = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(heel[0] * pictureWidth, heel[1] * pictureHeight, 7 + age * 2, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  const left = 12, width = Math.max(1, pictureWidth - 24), top = pictureHeight - 40;
+  const position = index => left + width * index / Math.max(1, pose.frames.length - 1);
+  ctx.fillStyle = "#0b1725dd";
+  ctx.fillRect(left - 4, top - 6, width + 8, 40);
+  strikes.forEach(strike => {
+    ctx.strokeStyle = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
+    const y = top + (strike.foot === "left" ? 0 : 16);
+    ctx.beginPath(); ctx.moveTo(position(strike.frame), y); ctx.lineTo(position(strike.frame), y + 10); ctx.stroke();
+  });
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath(); ctx.moveTo(position(index), top - 4); ctx.lineTo(position(index), top + 30); ctx.stroke();
+}
+
+function drawTrunkLean(ctx, frame, index) {
+  if (!frame || ![11,12,23,24].every(i => frame[i])) return;
+  const midpoint = (a, b) => [(frame[a][0] + frame[b][0]) * pictureWidth / 2,
+    (frame[a][1] + frame[b][1]) * pictureHeight / 2];
+  const hip = midpoint(23, 24), shoulder = midpoint(11, 12);
+  const dx = shoulder[0] - hip[0], dy = shoulder[1] - hip[1];
+  const length = Math.hypot(dx, dy);
+  if (!length) return;
+  ctx.strokeStyle = ctx.fillStyle = "#f59e0b";
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(...hip); ctx.lineTo(...shoulder); ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 5]);
+  ctx.beginPath(); ctx.moveTo(...hip); ctx.lineTo(hip[0], hip[1] - length); ctx.stroke();
+  ctx.setLineDash([]);
+  const end = -Math.PI / 2 + Math.atan2(dx, -dy);
+  const radius = .55 * length;
+  ctx.beginPath();
+  ctx.moveTo(...hip);
+  ctx.arc(...hip, radius, -Math.PI / 2, end, dx < 0);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(245, 158, 11, 0.2)";
+  ctx.fill();
+  ctx.beginPath(); ctx.arc(...hip, radius, -Math.PI / 2, end, dx < 0); ctx.stroke();
+  const value = measurement.series.trunk_lean_deg[index];
+  if (value != null) {
+    const text = `${value.toFixed(1)}°`;
+    ctx.font = "bold 15px monospace";
+    ctx.textBaseline = "top";
+    const padding = 6;
+    const width = ctx.measureText(text).width + padding * 2;
+    const x = dx >= 0 ? hip[0] - 14 - width : hip[0] + 14;
+    const y = hip[1] - length + 20;
+    ctx.fillStyle = "rgba(11, 23, 37, 0.85)";
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, 15 + padding * 2, 6);
+    ctx.fill();
+    ctx.fillStyle = "#f59e0b";
+    ctx.fillText(text, x + padding, y + padding);
+  }
+}
 
 window.__runform = Object.freeze({
   get phase() { return phase; },
+  get scene() { return scene?.id ?? null; },
   get frameIndex() { return frameIndex; }
 });
 
 function clearStage() {
   cancelAnimationFrame(animation);
   phase = "idle";
+  startScene(null);
+  sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = true; });
+  measurement = null;
   video.pause();
   video.onloadedmetadata = null;
   video.onseeked = null;
@@ -186,12 +313,16 @@ function goLive() {
   phase = "live";
   veil.style.opacity = "0";
   label.textContent = "Live tracking";
+  sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = false; });
+  startScene(scenes[0]);
   playButton.disabled = false;
   replayButton.disabled = false;
   video.play().catch(() => { playButton.textContent = "Play"; });
 }
 
 function beginIntro() {
+  startScene(null);
+  sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = true; });
   video.pause();
   phase = "seeking";
   playButton.disabled = true;
@@ -213,7 +344,8 @@ function beginIntro() {
 }
 
 function startStage(file, data) {
-  pose = data;
+  measurement = data;
+  pose = data.pose;
   firstFrame = Math.max(0, pose.frames.findIndex(frame => frame !== null));
   objectURL = URL.createObjectURL(file);
   video.muted = true;
@@ -228,7 +360,7 @@ function startStage(file, data) {
 
 function color(index) { return index % 2 ? "#22d3ee" : "#a78bfa"; }
 function draw(frame, jointProgress, boneProgress) {
-  ctx.globalAlpha = opacity;
+  ctx.globalAlpha = opacity * (scene ? .4 : 1);
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.shadowBlur = 12;
@@ -258,7 +390,13 @@ function draw(frame, jointProgress, boneProgress) {
 }
 
 function tick(now) {
-  const delta = Math.min(100, now - lastTime);
+  const wallDelta = Math.max(0, now - lastTime);
+  const delta = Math.min(100, wallDelta);
+  if (scene && !video.paused && !video.seeking) {
+    sceneElapsed += wallDelta;
+    if (sceneElapsed >= 8000) startScene(scenes[scenes.indexOf(scene) + 1] || null);
+    progressFill.style.width = `${clamp(sceneElapsed / 8000) * 100}%`;
+  }
   lastTime = now;
   if (phase === "seeking" && seekReady) {
     phase = "joints";
@@ -284,6 +422,11 @@ function tick(now) {
   if (lastPose && phase !== "seeking") draw(lastPose,
     phase === "joints" ? clamp(elapsed / 1100) : 1,
     phase === "joints" ? 0 : phase === "bones" ? clamp(elapsed / 1400) : 1);
+  if (scene) {
+    ctx.save();
+    scene.draw(ctx, frame, frameIndex);
+    ctx.restore();
+  }
   animation = requestAnimationFrame(tick);
 }
 
