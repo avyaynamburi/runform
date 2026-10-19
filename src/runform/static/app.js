@@ -110,6 +110,12 @@ dropZone.addEventListener("drop", event => upload(event.dataTransfer.files[0]));
 const video = document.querySelector("#runner-video");
 const canvas = document.querySelector("#skeleton");
 const ctx = canvas.getContext("2d");
+const backdrop = document.querySelector("#backdrop");
+const backdropCtx = backdrop.getContext("2d");
+let backdropTick = 0;
+const titleCard = document.querySelector("#title-card");
+const titleDetail = document.querySelector("#title-detail");
+const stage = document.querySelector("#video-stage");
 const veil = document.querySelector("#intro-veil");
 const label = document.querySelector("#tracking-label");
 const playButton = document.querySelector("#play-pause");
@@ -131,8 +137,77 @@ let animation = 0;
 let lastTime = 0;
 let lastPose = null;
 let opacity = 0;
+let stageWidth = 0;
+let stageHeight = 0;
 let pictureWidth = 0;
 let pictureHeight = 0;
+const camera = {cx: .5, cy: .5, scale: 1};
+let focusBox = null;
+let cameraTarget = {...camera};
+let introStart = 0;
+function project([x, y]) {
+  return [stageWidth / 2 + (x - camera.cx) * camera.scale * pictureWidth,
+    stageHeight / 2 + (y - camera.cy) * camera.scale * pictureHeight];
+}
+function applyCamera() {
+  const [x, y] = project([0, 0]);
+  video.style.transform = `translate(${x}px, ${y}px) scale(${camera.scale})`;
+}
+function limitCamera(cam) {
+  // Large pictures cover the viewport; small pictures stay wholly inside it.
+  for (const [key, viewport, picture] of [["cx", stageWidth, pictureWidth],
+    ["cy", stageHeight, pictureHeight]]) {
+    if (!picture) continue;
+    const edge = viewport / (2 * picture * cam.scale);
+    cam[key] = Math.max(Math.min(edge, 1 - edge), Math.min(Math.max(edge, 1 - edge), cam[key]));
+  }
+  return cam;
+}
+function drawBackdrop() {
+  backdrop.hidden = phase === "title";
+  if (backdrop.hidden || video.readyState < 2 || !stageWidth || !stageHeight) return;
+  if (backdropTick++ % (reducedMotion.matches ? 8 : 2)) return;
+  const scale = Math.max(backdrop.width / video.videoWidth, backdrop.height / video.videoHeight);
+  const width = video.videoWidth * scale, height = video.videoHeight * scale;
+  backdropCtx.drawImage(video, (backdrop.width - width) / 2, (backdrop.height - height) / 2, width, height);
+}
+function updateCamera(frame, dt, now, snap = false) {
+  const intro = ["title", "seeking", "joints", "bones", "reveal"].includes(phase);
+  const id = intro ? "intro" : scene?.id;
+  const regions = {intro: [0,11,12,23,24], "trunk-lean": [0,11,12,23,24],
+    cadence: [27,28,29,30,31,32], knee: [23,24,25,26,27,28,29,30,31,32], bounce: [11,12,23,24]};
+  if (!regions[id]) {
+    cameraTarget = {cx: .5, cy: .5, scale: 1};
+    focusBox = null;
+  } else if (frame) {
+    const points = regions[id].map(i => frame[i]).filter(Boolean);
+    if (points.length) {
+      const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+      const w = Math.max(.01, Math.max(...xs) - Math.min(...xs));
+      const h = Math.max(.01, Math.max(...ys) - Math.min(...ys));
+      const box = {cx: (Math.max(...xs) + Math.min(...xs)) / 2,
+        cy: (Math.max(...ys) + Math.min(...ys)) / 2, w: w * 1.5, h: h * (id === "bounce" ? 2.3 : 1.5)};
+      const alpha = snap || reducedMotion.matches || !focusBox ? 1 : 1 - Math.exp(-dt / 250);
+      if (!focusBox) focusBox = {...box};
+      for (const key of Object.keys(box)) focusBox[key] += (box[key] - focusBox[key]) * alpha;
+      // Compare box dimensions to the corresponding pixel viewport dimensions.
+      const scale = Math.max(1, Math.min(2.6, .8 * Math.min(
+        stageWidth / (focusBox.w * pictureWidth), stageHeight / (focusBox.h * pictureHeight))));
+      cameraTarget = limitCamera({cx: focusBox.cx, cy: focusBox.cy, scale});
+      if (intro && !["title", "seeking"].includes(phase)) {
+        const t = clamp((now - introStart) / 2500);
+        const pullback = t * t * (3 - 2 * t);
+        cameraTarget = limitCamera({cx: cameraTarget.cx + (.5 - cameraTarget.cx) * pullback,
+          cy: cameraTarget.cy + (.5 - cameraTarget.cy) * pullback,
+          scale: cameraTarget.scale + (1 - cameraTarget.scale) * pullback});
+      }
+    }
+  }
+  const alpha = snap || reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 350);
+  for (const key of Object.keys(camera)) camera[key] += (cameraTarget[key] - camera[key]) * alpha;
+  limitCamera(camera);
+  applyCamera();
+}
 let firstFrame = 0;
 let seekReady = false;
 let scene = null;
@@ -245,11 +320,11 @@ function drawCadence(ctx, frame, index) {
     ctx.strokeStyle = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(heel[0] * pictureWidth, heel[1] * pictureHeight, 7 + age * 2, 0, Math.PI * 2);
+    ctx.arc(...project(heel), 7 + age * 2, 0, Math.PI * 2);
     ctx.stroke();
   });
   ctx.globalAlpha = 1;
-  const left = 12, width = Math.max(1, pictureWidth - 24), top = pictureHeight - 40;
+  const left = 12, width = Math.max(1, stageWidth - 24), top = stageHeight * .94 - 44;
   const position = index => left + width * index / Math.max(1, pose.frames.length - 1);
   ctx.fillStyle = "#0b1725dd";
   ctx.fillRect(left - 4, top - 6, width + 8, 40);
@@ -264,8 +339,8 @@ function drawCadence(ctx, frame, index) {
 
 function drawTrunkLean(ctx, frame, index) {
   if (!frame || ![11,12,23,24].every(i => frame[i])) return;
-  const midpoint = (a, b) => [(frame[a][0] + frame[b][0]) * pictureWidth / 2,
-    (frame[a][1] + frame[b][1]) * pictureHeight / 2];
+  const midpoint = (a, b) => project([(frame[a][0] + frame[b][0]) / 2,
+    (frame[a][1] + frame[b][1]) / 2]);
   const hip = midpoint(23, 24), shoulder = midpoint(11, 12);
   const dx = shoulder[0] - hip[0], dy = shoulder[1] - hip[1];
   const length = Math.hypot(dx, dy);
@@ -308,8 +383,8 @@ function pill(ctx, text, x, y, accent) {
   ctx.font = "bold 15px monospace";
   ctx.textBaseline = "top";
   const width = ctx.measureText(text).width + 12;
-  x = Math.max(0, Math.min(x, pictureWidth - width));
-  y = Math.max(0, Math.min(y, pictureHeight - 27));
+  x = Math.max(0, Math.min(x, stageWidth - width));
+  y = Math.max(0, Math.min(y, stageHeight - 27));
   ctx.fillStyle = "rgba(11, 23, 37, 0.85)";
   ctx.beginPath(); ctx.roundRect(x, y, width, 27, 6); ctx.fill();
   ctx.fillStyle = accent;
@@ -322,7 +397,7 @@ function drawKnee(ctx, frame, index) {
     if (age < 0 || age > 15) return;
     const ids = strike.foot === "left" ? [23,25,27] : [24,26,28];
     if (!frame || !ids.every(id => frame[id])) return;
-    const [hip, knee, ankle] = ids.map(id => [frame[id][0] * pictureWidth, frame[id][1] * pictureHeight]);
+    const [hip, knee, ankle] = ids.map(id => project(frame[id]));
     ctx.globalAlpha = 1 - age / 16;
     ctx.strokeStyle = "#f472b6";
     ctx.lineWidth = 5;
@@ -341,8 +416,8 @@ function drawKnee(ctx, frame, index) {
 function hipPoint(index) {
   const frame = pose.frames[index];
   if (!frame?.[23] || !frame[24]) return null;
-  return [(frame[23][0] + frame[24][0]) * pictureWidth / 2,
-    (frame[23][1] + frame[24][1]) * pictureHeight / 2];
+  return project([(frame[23][0] + frame[24][0]) / 2,
+    (frame[23][1] + frame[24][1]) / 2]);
 }
 
 function drawBounce(ctx, frame, index) {
@@ -386,12 +461,21 @@ function drawBounce(ctx, frame, index) {
 window.__runform = Object.freeze({
   get phase() { return phase; },
   get scene() { return scene?.id ?? null; },
-  get frameIndex() { return frameIndex; }
+  get frameIndex() { return frameIndex; },
+  get camera() { return {...camera}; }
 });
 
 function clearStage() {
   cancelAnimationFrame(animation);
   phase = "idle";
+  titleCard.hidden = true;
+  backdrop.hidden = true;
+  backdropTick = 0;
+  backdropCtx.clearRect(0, 0, backdrop.width, backdrop.height);
+  focusBox = null;
+  Object.assign(camera, {cx: .5, cy: .5, scale: 1});
+  cameraTarget = {...camera};
+  applyCamera();
   startScene(null);
   sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = true; });
   measurement = null;
@@ -407,23 +491,36 @@ function clearStage() {
   opacity = 0;
   playButton.disabled = true;
   replayButton.disabled = true;
-  ctx.clearRect(0, 0, pictureWidth, pictureHeight);
+  ctx.clearRect(0, 0, stageWidth, stageHeight);
 }
 
 function resizeCanvas() {
   if (!video.videoWidth || !video.videoHeight) return;
-  const box = video.getBoundingClientRect();
+  const box = {width: stage.clientWidth, height: stage.clientHeight};
   const scale = Math.min(box.width / video.videoWidth, box.height / video.videoHeight);
   pictureWidth = video.videoWidth * scale;
   pictureHeight = video.videoHeight * scale;
-  canvas.style.width = `${pictureWidth}px`;
-  canvas.style.height = `${pictureHeight}px`;
-  canvas.style.left = `${(box.width - pictureWidth) / 2}px`;
-  canvas.style.top = `${(box.height - pictureHeight) / 2}px`;
+  stageWidth = box.width;
+  stageHeight = box.height;
+  canvas.style.width = `${stageWidth}px`;
+  canvas.style.height = `${stageHeight}px`;
+  canvas.style.left = "0";
+  canvas.style.top = "0";
+  video.style.width = `${pictureWidth}px`;
+  video.style.height = `${pictureHeight}px`;
+  video.style.left = "0";
+  video.style.top = "0";
+  limitCamera(camera);
+  applyCamera();
   const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.round(pictureWidth * ratio);
-  canvas.height = Math.round(pictureHeight * ratio);
+  canvas.width = Math.round(stageWidth * ratio);
+  canvas.height = Math.round(stageHeight * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  // Ambient fill needs no high-DPI detail beneath its blur.
+  backdrop.width = Math.max(1, Math.round(stageWidth / 2));
+  backdrop.height = Math.max(1, Math.round(stageHeight / 2));
+  backdropTick = 0;
+  drawBackdrop();
 }
 window.addEventListener("resize", resizeCanvas);
 new ResizeObserver(resizeCanvas).observe(video);
@@ -451,7 +548,16 @@ function beginIntro() {
   sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = true; });
   userPaused = false;
   video.pause();
-  phase = "seeking";
+  phase = reducedMotion.matches ? "seeking" : "title";
+  phaseStart = performance.now();
+  titleCard.hidden = reducedMotion.matches;
+  backdrop.hidden = !reducedMotion.matches;
+  backdropTick = 0;
+  titleCard.style.opacity = "1";
+  titleDetail.textContent = "";
+  titleCard.querySelector("strong").style.opacity = "0";
+  focusBox = null;
+  updateCamera(pose.frames[firstFrame], 0, phaseStart, true);
   playButton.disabled = true;
   replayButton.disabled = true;
   veil.style.opacity = ".65";
@@ -461,7 +567,7 @@ function beginIntro() {
   setSpeed(0.5);
   const target = firstFrame / pose.fps;
   const ready = () => {
-    if (phase !== "seeking") return;
+    if (!["title", "seeking"].includes(phase)) return;
     seekReady = true;
   };
   seekReady = false;
@@ -478,7 +584,7 @@ function startStage(file, data) {
   video.muted = true;
   video.onloadedmetadata = () => { resizeCanvas(); beginIntro(); };
   video.onloadeddata = () => {
-    if (phase === "seeking" && !video.seeking) seekReady = true;
+    if (["title", "seeking"].includes(phase) && !video.seeking) seekReady = true;
   };
   video.src = objectURL;
   lastTime = performance.now();
@@ -499,8 +605,8 @@ function draw(frame, jointProgress, boneProgress) {
     const [endX,endY] = frame[b];
     ctx.strokeStyle = ctx.shadowColor = i === 0 || i === 3 ? "#b6f3fa" : color(a);
     ctx.beginPath();
-    ctx.moveTo(x * pictureWidth, y * pictureHeight);
-    ctx.lineTo((x + (endX-x) * progress) * pictureWidth, (y + (endY-y) * progress) * pictureHeight);
+    ctx.moveTo(...project([x, y]));
+    ctx.lineTo(...project([x + (endX-x) * progress, y + (endY-y) * progress]));
     ctx.stroke();
   });
   joints.forEach((index, i) => {
@@ -509,7 +615,7 @@ function draw(frame, jointProgress, boneProgress) {
     if (!progress) return;
     ctx.fillStyle = ctx.shadowColor = color(index);
     ctx.beginPath();
-    ctx.arc(frame[index][0] * pictureWidth, frame[index][1] * pictureHeight, 3.2 * progress, 0, Math.PI * 2);
+    ctx.arc(...project(frame[index]), 3.2 * progress, 0, Math.PI * 2);
     ctx.fill();
   });
   ctx.globalAlpha = 1;
@@ -525,9 +631,19 @@ function tick(now) {
     progressFill.style.width = `${clamp(sceneElapsed / 8000) * 100}%`;
   }
   lastTime = now;
+  label.style.visibility = phase === "title" ? "hidden" : "";
+  if (phase === "title") {
+    const age = now - phaseStart;
+    const text = `${measurement.report.frames_total} frames · ${measurement.report.fps ?? pose.fps} fps · 33 points per frame`;
+    titleCard.querySelector("strong").style.opacity = String(clamp(age / 450));
+    titleDetail.textContent = text.slice(0, Math.floor(clamp((age - 350) / 850) * text.length));
+    titleCard.style.opacity = String(1 - clamp((age - 1200) / 400));
+    if (age >= 1600) { phase = "seeking"; titleCard.hidden = true; }
+  }
   if (phase === "seeking" && seekReady) {
     phase = "joints";
     phaseStart = now;
+    introStart = now;
     if (reducedMotion.matches) goLive();
   }
   let elapsed = now - phaseStart;
@@ -563,8 +679,10 @@ function tick(now) {
   const frame = pose.frames[frameIndex];
   if (frame) { lastPose = frame; opacity = Math.min(1, opacity + delta / 120); }
   else opacity = Math.max(0, opacity - delta / 250);
-  ctx.clearRect(0, 0, pictureWidth, pictureHeight);
-  if (lastPose && phase !== "seeking") draw(lastPose,
+  updateCamera(frame, wallDelta, now);
+  drawBackdrop();
+  ctx.clearRect(0, 0, stageWidth, stageHeight);
+  if (lastPose && !["title", "seeking"].includes(phase)) draw(lastPose,
     phase === "joints" ? clamp(elapsed / 1100) : 1,
     phase === "joints" ? 0 : phase === "bones" ? clamp(elapsed / 1400) : 1);
   if (scene) {

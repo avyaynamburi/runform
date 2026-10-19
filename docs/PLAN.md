@@ -221,7 +221,7 @@ src/runform/
 | W2 | Skeleton overlay + draw-in intro | done |
 | W3 | Explainers: cadence + trunk lean | done |
 | W4 | Explainers: knee at strike + vertical oscillation; polish | done |
-| W5 | Cinematic camera: title card, zooms per scene | todo |
+| W5 | Cinematic camera: title card, zooms per scene | done |
 | W6 | Chart beats: each scene opens with its graph, then the zoomed video | todo |
 
 ### W1 — Upload → stat cards
