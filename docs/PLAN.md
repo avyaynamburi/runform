@@ -226,7 +226,7 @@ src/runform/
 | W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | done |
 | W8 | Speed ramps: slow-mo on key moments, fast transitions | done |
 | W9 | Locked framing per scene; tour ends on the summary | done |
-| W10 | Immersive fullscreen experience | todo |
+| W10 | Immersive fullscreen experience | done |
 | W11 | Foot path vs. target path (+ overstride metric) | todo |
 
 ### W1 — Upload → stat cards

@@ -85,7 +85,6 @@ async function upload(file) {
     renderResults(payload.report);
     startStage(file, payload);
     processing.hidden = true;
-    document.querySelector("#video-stage").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (failure) {
     renderError(failure.message || "Connection failed. Please try again.");
   } finally {
@@ -116,6 +115,84 @@ let backdropTick = 0;
 const titleCard = document.querySelector("#title-card");
 const titleDetail = document.querySelector("#title-detail");
 const stage = document.querySelector("#video-stage");
+const controlBar = document.querySelector("#control-bar");
+const fullscreenButton = document.querySelector("#fullscreen-btn");
+const fullscreenHint = document.querySelector("#fullscreen-hint");
+let immersive = false;
+let barVisible = true;
+let barTimer = 0;
+let hintTimer = 0;
+let hintShown = false;
+let barHovered = false;
+let fullscreenActive = false;
+function measureBar() {
+  stage.style.setProperty("--control-height", `${controlBar.offsetHeight}px`);
+}
+function showBar() {
+  clearTimeout(barTimer);
+  barVisible = true;
+  stage.classList.remove("controls-hidden");
+  measureBar();
+  if (immersive) barTimer = setTimeout(() => {
+    if (barHovered || controlBar.contains(document.activeElement)) return;
+    barVisible = false;
+    stage.classList.add("controls-hidden");
+  }, 2500);
+}
+function setImmersive(value) {
+  immersive = value;
+  stage.classList.toggle("immersive", value);
+  document.documentElement.classList.toggle("immersive-open", value);
+  document.body.classList.toggle("immersive-open", value);
+  (value ? stage : stage.parentElement).append(controlBar);
+  showBar();
+  resizeCanvas();
+}
+async function leaveImmersive(scroll = true) {
+  setImmersive(false);
+  if (document.fullscreenElement) {
+    try { await document.exitFullscreen(); } catch { /* Fullscreen may be unavailable. */ }
+  }
+  if (scroll) document.querySelector("#cards").scrollIntoView({behavior: "smooth", block: "start"});
+}
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else {
+      setImmersive(true);
+      await stage.requestFullscreen();
+    }
+  } catch { /* Fullscreen is optional, including on mobile browsers. */ }
+}
+fullscreenButton.addEventListener("click", toggleFullscreen);
+document.querySelector("#close-btn").addEventListener("click", () => leaveImmersive());
+document.querySelector("#full-breakdown").addEventListener("click", () => leaveImmersive());
+document.addEventListener("fullscreenchange", () => {
+  fullscreenActive = !!document.fullscreenElement;
+  fullscreenButton.setAttribute("aria-label", fullscreenActive ? "Exit fullscreen" : "Enter fullscreen");
+  fullscreenButton.setAttribute("aria-pressed", String(fullscreenActive));
+  fullscreenButton.querySelector("path").setAttribute("d", fullscreenActive
+    ? "M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"
+    : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5");
+  if (fullscreenActive) fullscreenHint.classList.remove("visible");
+  showBar();
+  resizeCanvas();
+});
+document.addEventListener("keydown", event => {
+  if (event.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (event.key.toLowerCase() === "f" && !results.hidden && !event.repeat) {
+    event.preventDefault();
+    toggleFullscreen();
+  } else if (event.key === "Escape" && immersive && !document.fullscreenElement && !fullscreenActive) {
+    leaveImmersive();
+  }
+});
+["pointermove", "pointerdown", "focusin"].forEach(name => stage.addEventListener(name, showBar));
+controlBar.addEventListener("pointerenter", () => { barHovered = true; showBar(); });
+controlBar.addEventListener("pointerleave", () => { barHovered = false; showBar(); });
+controlBar.addEventListener("focusin", showBar);
+controlBar.addEventListener("focusout", showBar);
+new ResizeObserver(measureBar).observe(controlBar);
 const veil = document.querySelector("#intro-veil");
 const label = document.querySelector("#tracking-label");
 const playButton = document.querySelector("#play-pause");
@@ -377,6 +454,14 @@ function startScene(next, incoming = true) {
   previousFrame = pose ? Math.floor(video.currentTime * pose.fps) - 1 : -1;
   frozenStrikes.clear();
   scene = next;
+  document.querySelector("#full-breakdown").hidden = scene?.id !== "summary";
+  if (scene?.id === "cadence" && !hintShown) {
+    hintShown = true;
+    if (matchMedia("(pointer: fine)").matches && !document.fullscreenElement) {
+      fullscreenHint.classList.add("visible");
+      hintTimer = setTimeout(() => fullscreenHint.classList.remove("visible"), 3000);
+    }
+  }
   sceneElapsed = 0;
   flashStart = -Infinity;
   leanEMA = null;
@@ -632,10 +717,16 @@ window.__runform = Object.freeze({
   get scene() { return scene?.id ?? null; },
   get frameIndex() { return frameIndex; },
   get camera() { return {...camera}; },
-  get rate() { return video.playbackRate; }
+  get rate() { return video.playbackRate; },
+  get immersive() { return immersive; },
+  get barVisible() { return barVisible; }
 });
 
 function clearStage() {
+  leaveImmersive(false);
+  clearTimeout(hintTimer);
+  fullscreenHint.classList.remove("visible");
+  hintShown = false;
   cancelAnimationFrame(animation);
   phase = "idle";
   titleCard.hidden = true;
@@ -754,6 +845,7 @@ function beginIntro() {
 }
 
 function startStage(file, data) {
+  setImmersive(true);
   measurement = data;
   pose = data.pose;
   firstFrame = Math.max(0, pose.frames.findIndex(frame => frame !== null));
