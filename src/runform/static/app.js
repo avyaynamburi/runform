@@ -142,9 +142,9 @@ let stageHeight = 0;
 let pictureWidth = 0;
 let pictureHeight = 0;
 const camera = {cx: .5, cy: .5, scale: 1};
-let focusBox = null;
-let cameraTarget = {...camera};
-let introStart = 0;
+let framings = {};
+let framingId = null;
+let cameraTween = null;
 function project([x, y]) {
   return [stageWidth / 2 + (x - camera.cx) * camera.scale * pictureWidth,
     stageHeight / 2 + (y - camera.cy) * camera.scale * pictureHeight];
@@ -171,46 +171,53 @@ function drawBackdrop() {
   const width = video.videoWidth * scale, height = video.videoHeight * scale;
   backdropCtx.drawImage(video, (backdrop.width - width) / 2, (backdrop.height - height) / 2, width, height);
 }
-function updateCamera(frame, dt, now, snap = false) {
-  const intro = ["title", "seeking", "joints", "bones", "reveal"].includes(phase);
-  const nextScene = scenes[scenes.indexOf(scene) + 1];
-  const id = intro ? "intro" : scene && sceneElapsed > sceneDuration() - 600 ? nextScene?.id : scene?.id;
+function computeFramings() {
+  const full = {cx: .5, cy: .5, scale: 1};
+  framings = {full, summary: full};
   const regions = {intro: [0,11,12,23,24], "trunk-lean": [0,11,12,23,24],
     cadence: [27,28,29,30,31,32], knee: [23,24,25,26,27,28,29,30,31,32], bounce: [11,12,23,24]};
-  if (!regions[id]) {
-    cameraTarget = {cx: .5, cy: .5, scale: 1};
-    focusBox = null;
-  } else if (frame) {
-    const points = regions[id].map(i => frame[i]).filter(Boolean);
-    if (points.length) {
-      const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
-      const w = Math.max(.01, Math.max(...xs) - Math.min(...xs));
-      const h = Math.max(.01, Math.max(...ys) - Math.min(...ys));
-      const box = {cx: (Math.max(...xs) + Math.min(...xs)) / 2,
-        cy: (Math.max(...ys) + Math.min(...ys)) / 2, w: w * 1.5, h: h * (id === "bounce" ? 2.3 : 1.5)};
-      const alpha = snap || reducedMotion.matches || !focusBox ? 1 : 1 - Math.exp(-dt / 250);
-      if (!focusBox) focusBox = {...box};
-      for (const key of Object.keys(box)) focusBox[key] += (box[key] - focusBox[key]) * alpha;
-      // Compare box dimensions to the corresponding pixel viewport dimensions.
-      const scale = Math.max(1, Math.min(2.6, .8 * Math.min(
-        stageWidth / (focusBox.w * pictureWidth), stageHeight / (focusBox.h * pictureHeight))));
-      cameraTarget = limitCamera({cx: focusBox.cx, cy: focusBox.cy, scale});
-      if (intro && !["title", "seeking"].includes(phase)) {
-        const t = clamp((now - introStart) / 2500);
-        const pullback = t * t * (3 - 2 * t);
-        cameraTarget = limitCamera({cx: cameraTarget.cx + (.5 - cameraTarget.cx) * pullback,
-          cy: cameraTarget.cy + (.5 - cameraTarget.cy) * pullback,
-          scale: cameraTarget.scale + (1 - cameraTarget.scale) * pullback});
+  const percentile = (values, fraction) => {
+    const index = (values.length - 1) * fraction;
+    const low = Math.floor(index), high = Math.ceil(index);
+    return values[low] + (values[high] - values[low]) * (index - low);
+  };
+  for (const [id, ids] of Object.entries(regions)) {
+    const xs = [], ys = [];
+    for (const frame of pose.frames) {
+      if (!frame) continue;
+      for (const i of ids) {
+        if (!frame[i]) continue;
+        xs.push(frame[i][0]); ys.push(frame[i][1]);
       }
     }
+    if (!xs.length) { framings[id] = {...full}; continue; }
+    xs.sort((a, b) => a - b); ys.sort((a, b) => a - b);
+    const left = percentile(xs, .05), right = percentile(xs, .95);
+    const top = percentile(ys, .05), bottom = percentile(ys, .95);
+    const w = Math.max(.01, right - left) * 1.5;
+    const h = Math.max(.01, bottom - top) * (id === "bounce" ? 2.3 : 1.5);
+    const scale = Math.max(1, Math.min(2.6, .8 * Math.min(
+      stageWidth / (w * pictureWidth), stageHeight / (h * pictureHeight))));
+    framings[id] = limitCamera({cx: (left + right) / 2, cy: (top + bottom) / 2, scale});
   }
-  if (scene?.id === "knee" && !reducedMotion.matches) {
-    cameraTarget.scale *= 1 + .08 * (1 - ease(clamp((now - flashStart) / 600)));
-    limitCamera(cameraTarget);
+}
+function glideTo(id, now = performance.now(), duration = 1100) {
+  if (!framings[id]) return;
+  updateCamera(now);
+  framingId = id;
+  cameraTween = {from: {...camera}, to: {...framings[id]}, start: now, duration};
+  updateCamera(now);
+}
+function updateCamera(now) {
+  if (cameraTween) {
+    const t = reducedMotion.matches || !cameraTween.duration ? 1
+      : clamp((now - cameraTween.start) / cameraTween.duration);
+    const progress = t < .5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
+    for (const key of Object.keys(camera)) {
+      camera[key] = cameraTween.from[key] + (cameraTween.to[key] - cameraTween.from[key]) * progress;
+    }
+    if (t === 1) { Object.assign(camera, cameraTween.to); cameraTween = null; }
   }
-  const alpha = snap || reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 350);
-  for (const key of Object.keys(camera)) camera[key] += (cameraTarget[key] - camera[key]) * alpha;
-  limitCamera(camera);
   applyCamera();
 }
 let firstFrame = 0;
@@ -287,14 +294,14 @@ function updateRate(dt, now) {
   const visible = phase === "live" && !reducedMotion.matches;
   speedMarker.hidden = !visible;
   if (!visible) { settledAt = null; markerActive = false; }
-  else if (Math.abs(rate - baseRate) > .05) { settledAt = null; markerActive = true; }
+  else if (Math.abs(rate - (scene?.id === "summary" ? target : baseRate)) > .05) { settledAt = null; markerActive = true; }
   else if (markerActive && settledAt === null) settledAt = now;
   else if (settledAt !== null && now - settledAt >= 600) markerActive = false;
   speedMarker.classList.toggle("visible", visible && markerActive);
   speedMarker.textContent = effective < .6 * baseRate ? `SLOW-MO ${effective.toFixed(2)}×` : `${effective.toFixed(1)}×`;
 }
 const ease = t => 1 - (1 - t) ** 3;
-const sceneDuration = () => scene?.id === "summary" ? 7000 : 9000;
+const sceneDuration = () => scene?.id === "summary" ? Infinity : 9000;
 const sceneChips = document.querySelector("#scene-chips");
 const metricValue = (value, unit) => value == null ? "—" : `${value.toFixed(1)}${unit}`;
 const scenes = [
@@ -359,6 +366,8 @@ function updateLowerThird() {
 }
 
 function startScene(next, incoming = true) {
+  if (next?.id === "summary" && scene === next) return;
+  if (next) glideTo(next.id);
   transitionIn = !!next && incoming;
   tourStart = !!next && !incoming;
   if (freezeUntil) {
@@ -635,9 +644,10 @@ function clearStage() {
   backdrop.hidden = true;
   backdropTick = 0;
   backdropCtx.clearRect(0, 0, backdrop.width, backdrop.height);
-  focusBox = null;
+  framings = {};
+  framingId = null;
+  cameraTween = null;
   Object.assign(camera, {cx: .5, cy: .5, scale: 1});
-  cameraTarget = {...camera};
   applyCamera();
   startScene(null);
   sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = true; });
@@ -658,8 +668,9 @@ function clearStage() {
 }
 
 function resizeCanvas() {
-  if (!video.videoWidth || !video.videoHeight) return;
+  if (!pose || !video.videoWidth || !video.videoHeight) return;
   const box = {width: stage.clientWidth, height: stage.clientHeight};
+  if (stageWidth === box.width && stageHeight === box.height && framings.intro) return;
   const scale = Math.min(box.width / video.videoWidth, box.height / video.videoHeight);
   pictureWidth = video.videoWidth * scale;
   pictureHeight = video.videoHeight * scale;
@@ -673,7 +684,12 @@ function resizeCanvas() {
   video.style.height = `${pictureHeight}px`;
   video.style.left = "0";
   video.style.top = "0";
-  limitCamera(camera);
+  computeFramings();
+  if (framingId) {
+    const now = performance.now();
+    const remaining = cameraTween ? Math.max(0, cameraTween.start + cameraTween.duration - now) : 0;
+    glideTo(framingId, now, remaining);
+  }
   applyCamera();
   const ratio = window.devicePixelRatio || 1;
   canvas.width = Math.round(stageWidth * ratio);
@@ -698,7 +714,6 @@ function setSpeed(speed) {
 function goLive() {
   phase = "live";
   veil.style.opacity = "0";
-  label.textContent = "Live tracking";
   sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = false; });
   startScene(scenes[0], false);
   playButton.disabled = false;
@@ -719,8 +734,7 @@ function beginIntro() {
   titleCard.style.opacity = "1";
   titleDetail.textContent = "";
   titleCard.querySelector("strong").style.opacity = "0";
-  focusBox = null;
-  updateCamera(pose.frames[firstFrame], 0, phaseStart, true);
+  glideTo("intro", phaseStart);
   playButton.disabled = true;
   replayButton.disabled = true;
   veil.style.opacity = ".65";
@@ -760,7 +774,8 @@ function overlayAlpha() {
 }
 
 function draw(frame, jointProgress, boneProgress) {
-  ctx.globalAlpha = opacity * (scene && scene.id !== "summary" ? 1 - .6 * overlayAlpha() : 1);
+  ctx.globalAlpha = scene?.id === "summary" ? 1
+    : opacity * (scene ? 1 - .6 * overlayAlpha() : 1);
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.shadowBlur = 12;
@@ -795,7 +810,7 @@ function tick(now) {
   drawDelta = wallDelta;
   if (scene && !userPaused && (freezeUntil || (!video.paused && !video.seeking))) {
     sceneElapsed += wallDelta;
-    if (sceneElapsed >= sceneDuration()) startScene(scenes[scenes.indexOf(scene) + 1] || null);
+    if (sceneElapsed >= sceneDuration()) startScene(scenes[scenes.indexOf(scene) + 1]);
   }
   updateLowerThird();
   lastTime = now;
@@ -811,7 +826,7 @@ function tick(now) {
   if (phase === "seeking" && seekReady) {
     phase = "joints";
     phaseStart = now;
-    introStart = now;
+    glideTo("full", now, 2500);
     if (reducedMotion.matches) goLive();
   }
   let elapsed = now - phaseStart;
@@ -849,7 +864,7 @@ function tick(now) {
   const frame = pose.frames[frameIndex];
   if (frame) { lastPose = frame; opacity = Math.min(1, opacity + delta / 120); }
   else opacity = Math.max(0, opacity - delta / 250);
-  updateCamera(frame, wallDelta, now);
+  updateCamera(now);
   drawBackdrop();
   ctx.clearRect(0, 0, stageWidth, stageHeight);
   if (lastPose && !["title", "seeking"].includes(phase)) draw(lastPose,

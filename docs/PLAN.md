@@ -225,7 +225,7 @@ src/runform/
 | W6 | Chart beats: each scene opens with its graph, then the zoomed video | done (superseded by W7) |
 | W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | done |
 | W8 | Speed ramps: slow-mo on key moments, fast transitions | done |
-| W9 | Locked framing per scene; tour ends on the summary | todo |
+| W9 | Locked framing per scene; tour ends on the summary | done |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
