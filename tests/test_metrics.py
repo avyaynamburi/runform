@@ -5,7 +5,9 @@ import pytest
 
 from runform.gait import Strike
 from runform.metrics import (
+    body_height,
     facing_sign,
+    hip_height,
     joint_angle,
     knee_flexion_at_strikes,
     oscillation_strides,
@@ -137,3 +139,35 @@ def test_empty_landmarks(make_landmarks):
     landmarks = make_landmarks(0, 30)
     assert facing_sign(landmarks) == 1
     assert trunk_lean(landmarks).shape == (0,)
+
+
+
+def test_body_height(make_landmarks):
+    lm = make_landmarks(10, 30)
+    assert body_height(lm) == pytest.approx(.6)
+    lm.data[:] = np.nan
+    assert np.isnan(body_height(lm))
+
+
+def test_hip_height(make_landmarks):
+    lm = make_landmarks(300, 30, cadence_spm=170, hip_amp=.015)
+    values = hip_height(lm)
+    assert np.ptp(values) == pytest.approx(.05, rel=.1)
+    assert np.median(values) == pytest.approx(0, abs=.001)
+    lm.data[5] = np.nan
+    assert np.isnan(hip_height(lm)[5])
+    lm.data[:] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        assert np.isnan(hip_height(lm)).all()
+
+
+def test_hip_height_missing_hips_and_invalid_height(make_landmarks):
+    lm = make_landmarks(5, 30)
+    lm.data[:, [23, 24], 1] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        assert np.isnan(hip_height(lm)).all()
+        lm = make_landmarks(5, 30)
+        lm.data[:, [27, 28], 1] = .2
+        assert np.isnan(hip_height(lm)).all()

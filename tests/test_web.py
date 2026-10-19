@@ -54,6 +54,9 @@ def test_analyze_upload(monkeypatch, make_landmarks):
     knee = response.json["series"]["knee_at_strike_deg"]
     assert len(knee) == len(response.json["strikes"])
     assert knee == pytest.approx([165] * len(knee), abs=2)
+    hips = response.json["series"]["hip_height_rel"]
+    assert len(hips) == 300
+    assert max(hips) - min(hips) == pytest.approx(.05, rel=.1)
     strides = response.json["strides"]
     assert strides
     for stride in strides:
@@ -169,6 +172,11 @@ def test_analyze_measurement_tour(monkeypatch, make_landmarks):
     assert len(series) == len(clean.data)
     assert series[2] is None
     assert [value for value in series if value is not None] == pytest.approx([10] * 4)
+
+    hips = response.json["series"]["hip_height_rel"]
+    assert len(hips) == len(clean.data)
+    assert hips[2] is None
+    assert [value for value in hips if value is not None] == [0] * 4
 
     knees = response.json["series"]["knee_at_strike_deg"]
     assert len(knees) == len(strikes)

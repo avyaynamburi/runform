@@ -61,7 +61,10 @@ def create_app(model: str | Path | None = None) -> Flask:
                 series={"trunk_lean_deg": [
                     None if np.isnan(value) else round(float(value), 1)
                     for value in metrics.trunk_lean(analysis.clean)
-                ], "knee_at_strike_deg": knee_angles},
+                ], "knee_at_strike_deg": knee_angles, "hip_height_rel": [
+                    None if np.isnan(value) else round(float(value), 4)
+                    for value in metrics.hip_height(analysis.clean)
+                ]},
             )
         except ValueError as exc:
             return jsonify(error=str(exc)), 422

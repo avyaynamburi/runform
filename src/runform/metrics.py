@@ -18,17 +18,31 @@ class Stride:
     value: float
 
 
-def oscillation_strides(lm: Landmarks, strikes: list[Strike]) -> list[Stride]:
+def body_height(lm: Landmarks) -> float:
     shoulder_y = lm.data[:, [11, 12], 1].mean(axis=1)
     ankle_y = lm.data[:, [27, 28], 1].mean(axis=1)
     heights = ankle_y - shoulder_y
     heights = heights[np.isfinite(heights)]
     if not len(heights):
-        return []
-    body_height = float(np.median(heights))
-    if body_height <= 0:
-        return []
+        return float("nan")
+    height = float(np.median(heights))
+    return height if height > 0 else float("nan")
 
+
+def hip_height(lm: Landmarks) -> np.ndarray:
+    height = body_height(lm)
+    hip_y = lm.data[:, [23, 24], 1].mean(axis=1)
+    finite = np.isfinite(hip_y)
+    result = np.full(len(hip_y), np.nan)
+    if np.isfinite(height) and finite.any():
+        result[finite] = (np.median(hip_y[finite]) - hip_y[finite]) / height
+    return result
+
+
+def oscillation_strides(lm: Landmarks, strikes: list[Strike]) -> list[Stride]:
+    height = body_height(lm)
+    if np.isnan(height):
+        return []
     hip_y = lm.data[:, [23, 24], 1].mean(axis=1)
     values = []
     for foot in ("left", "right"):
@@ -40,7 +54,7 @@ def oscillation_strides(lm: Landmarks, strikes: list[Strike]) -> list[Stride]:
                 top, bottom = int(np.nanargmin(window)), int(np.nanargmax(window))
                 values.append(Stride(
                     foot, a, b, a + top, a + bottom,
-                    float((window[bottom] - window[top]) / body_height),
+                    float((window[bottom] - window[top]) / height),
                 ))
     return values
 

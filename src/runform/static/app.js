@@ -230,7 +230,7 @@ const scenes = [
     draw: drawCadence
   },
   {
-    id: "trunk-lean", title: "Trunk lean",
+    id: "trunk-lean", title: "Trunk lean", accent: "#f59e0b",
     value: report => metricValue(report.trunk_lean_deg, "°"),
     caption: "The angle between your hip-to-shoulder line and vertical, averaged over every frame.",
     draw: drawTrunkLean
@@ -268,6 +268,249 @@ scenes.forEach(item => {
   sceneChips.append(chip);
 });
 
+const chartPanel = document.querySelector("#chart-panel");
+const chartCanvas = document.querySelector("#measurement-chart");
+const chartCtx = chartCanvas.getContext("2d");
+let chartHover = null;
+let chartData = null;
+const currentBeat = () => !scene ? null : scene.id === "summary" || sceneElapsed >= 4000 ? "video" : "chart";
+const chartProgress = document.querySelector("#chart-progress");
+let displayedBeat = null;
+let touchStart = null;
+
+function plotBounds() {
+  const small = stageWidth < 540;
+  return {left: small ? 46 : 56, right: stageWidth - (small ? 12 : 24),
+    top: (small ? 100 : 76) + (chartData?.id === "bounce" ? 24 : 0), bottom: stageHeight - 40};
+}
+function resetChartHover() {
+  chartHover = null;
+  touchStart = null;
+}
+function updateChartHover(event, touch = false) {
+  resetChartHover();
+  if (currentBeat() !== "chart") return;
+  const rect = chartCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left, y = event.clientY - rect.top;
+  const bounds = plotBounds();
+  if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return;
+  chartHover = {x, y, expiresAt: touch ? performance.now() + 2000 : null};
+}
+for (const type of ["pointerenter", "pointermove"]) {
+  chartPanel.addEventListener(type, event => {
+    if (event.pointerType !== "touch") updateChartHover(event);
+  });
+}
+chartPanel.addEventListener("pointerleave", event => {
+  if (event.pointerType !== "touch") resetChartHover();
+});
+chartPanel.addEventListener("pointerdown", event => {
+  if (event.pointerType === "touch") {
+    resetChartHover();
+    touchStart = {x: event.clientX, y: event.clientY};
+  }
+});
+chartPanel.addEventListener("pointerup", event => {
+  if (event.pointerType !== "touch") return;
+  const tap = touchStart && Math.hypot(event.clientX - touchStart.x, event.clientY - touchStart.y) < 12;
+  if (tap) updateChartHover(event, true);
+  else resetChartHover();
+});
+chartPanel.addEventListener("pointercancel", resetChartHover);
+
+function syncBeat() {
+  const beat = currentBeat();
+  if (displayedBeat !== beat) resetChartHover();
+  displayedBeat = beat;
+  sceneCard.classList.toggle("chart-beat", beat === "chart");
+  sceneCard.setAttribute("aria-hidden", String(!scene || beat === "chart"));
+}
+
+function buildChart(id) {
+  const report = measurement.report, series = measurement.series;
+  const points = [];
+  const add = (frame, value, foot = null) => points.push({
+    t: frame / pose.fps, value, color: foot ? (foot === "left" ? "#0e9fbf" : "#8b5cf6") :
+      id === "bounce" ? "#34d399" : "#f59e0b"
+  });
+  let title, unit, reference = null, referenceLabel = "", band = null;
+  if (id === "cadence") {
+    title = "Step rate, stride by stride"; unit = "steps per minute";
+    for (const foot of ["left", "right"]) {
+      const strikes = measurement.strikes.filter(s => s.foot === foot).sort((a, b) => a.frame - b.frame);
+      strikes.slice(1).forEach((s, i) => {
+        if (s.frame > strikes[i].frame) add(s.frame, 120 * pose.fps / (s.frame - strikes[i].frame), foot);
+      });
+    }
+    reference = report.cadence_spm;
+    referenceLabel = `median ${reference} spm`;
+  } else if (id === "trunk-lean") {
+    title = "Trunk lean over time"; unit = "degrees";
+    series.trunk_lean_deg.forEach((v, i) => add(i, v));
+    reference = report.trunk_lean_deg;
+    referenceLabel = `average ${reference}°`;
+  } else if (id === "knee") {
+    title = "Knee angle at each foot strike"; unit = "degrees";
+    measurement.strikes.forEach((s, i) => add(s.frame, series.knee_at_strike_deg[i], s.foot));
+    reference = report.knee_flexion_at_strike_deg?.mean;
+    const std = report.knee_flexion_at_strike_deg?.std;
+    if (reference != null && std != null) band = [reference - std, reference + std];
+    referenceLabel = `${reference}° average`;
+  } else {
+    title = "Hip height through each stride"; unit = "% of body height";
+    series.hip_height_rel.forEach((v, i) => add(i, v == null ? null : v * 100));
+    referenceLabel = report.vertical_oscillation_rel == null ? "" :
+      `average bounce ${(report.vertical_oscillation_rel * 100).toFixed(1)}% of body height`;
+  }
+  points.sort((a, b) => a.t - b.t);
+  const clipDuration = Math.max(1 / pose.fps, (pose.frames.length - 1) / pose.fps);
+  const duration = id === "bounce" ? Math.min(6, clipDuration) : clipDuration;
+  const start = id === "bounce" ?
+    Math.max(0, Math.min(Math.floor(Math.floor(video.currentTime * pose.fps) / pose.fps), clipDuration - duration)) : 0;
+  const visiblePoints = points.filter(p => p.t >= start && p.t <= start + duration);
+  const values = visiblePoints.filter(p => p.value != null && Number.isFinite(p.value)).map(p => p.value);
+  if (reference != null) values.push(reference);
+  if (band) values.push(...band);
+  let min = values.length ? values.reduce((a, b) => Math.min(a, b)) : 0;
+  let max = values.length ? values.reduce((a, b) => Math.max(a, b)) : 1;
+  const padding = Math.max((max - min) * .1, id === "cadence" ? 10 : id === "bounce" ? .5 : 1);
+  min -= padding; max += padding;
+  // Round the domain outwards to a readable 1/2/5 tick interval.
+  const raw = (max - min) / 3, power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].find(n => n * power >= raw) * power;
+  min = Math.floor(min / step) * step;
+  max = Math.ceil(max / step) * step;
+  return {id, title, unit, points, visiblePoints, start, duration, min, max, step, reference, referenceLabel, band,
+    dual: id === "cadence" || id === "knee"};
+}
+
+function drawChart() {
+  if (!chartData || !stageWidth || !stageHeight) return;
+  const c = chartCtx, d = chartData, w = stageWidth, h = stageHeight;
+  const small = w < 540;
+  const {left, right, top, bottom} = plotBounds();
+  const x = time => left + (time - d.start) / d.duration * (right - left);
+  const y = value => bottom - (value - d.min) / (d.max - d.min) * (bottom - top);
+  const reveal = reducedMotion.matches ? 1 : clamp(sceneElapsed / 2000);
+  const fade = reducedMotion.matches ? 1 : clamp((sceneElapsed - 2000) / 400);
+  c.clearRect(0, 0, w, h);
+  c.textBaseline = "alphabetic"; c.textAlign = "left";
+  const valueRight = right - (d.dual && !small ? 156 : 0);
+  const value = scene.value(measurement.report);
+  c.fillStyle = "#e6edf3"; c.font = "22px monospace"; c.textAlign = "right";
+  c.fillText(value, valueRight, 28);
+  const titleWidth = Math.max(12, valueRight - c.measureText(value).width - 32);
+  c.font = "600 15px sans-serif"; c.textAlign = "left";
+  let title = d.title;
+  while (title.length && c.measureText(title).width > titleWidth) title = title.slice(0, -1);
+  if (title !== d.title) {
+    while (title.length && c.measureText(title + "…").width > titleWidth) title = title.slice(0, -1);
+    title += "…";
+  }
+  c.fillText(title, 16, 26);
+  c.font = "12px sans-serif"; c.fillStyle = "#8b98a5";
+  c.fillText(d.unit, left, top - 12);
+  if (d.dual) {
+    const legendY = small ? 50 : 26;
+    ["Left", "Right"].forEach((name, i) => {
+      const lx = right - 132 + i * 70;
+      c.fillStyle = i ? "#8b5cf6" : "#0e9fbf"; c.fillRect(lx, legendY - 8, 14, 3);
+      c.fillStyle = "#e6edf3"; c.fillText(name, lx + 20, legendY);
+    });
+  }
+  c.strokeStyle = "#1f2933"; c.lineWidth = 1;
+  const tickStride = Math.max(1, Math.ceil((d.max - d.min) / d.step / (small ? 3 : 4)));
+  for (let v = d.min; v <= d.max + d.step / 100; v += d.step * tickStride) {
+    c.beginPath(); c.moveTo(left, y(v)); c.lineTo(right, y(v)); c.stroke();
+    c.fillStyle = "#8b98a5"; c.textAlign = "right";
+    c.fillText(String(Number(v.toFixed(2))), left - 8, y(v) + 4);
+  }
+  c.textAlign = "center";
+  const ticks = small ? 3 : 4;
+  for (let i = 0; i <= ticks; i++) {
+    const time = d.start + d.duration * i / ticks;
+    c.fillText(time.toFixed(1), x(time), bottom + 18);
+  }
+  c.fillText("Time (s)", (left + right) / 2, h - 5);
+  const textPill = (text, px, py, align = "right", ink = "#8b98a5") => {
+    c.font = "12px sans-serif";
+    const width = c.measureText(text).width + 12;
+    const tx = Math.max(4, Math.min(w - width - 4, align === "right" ? px - width : px));
+    const ty = Math.max(4, Math.min(h - 26, py));
+    c.fillStyle = "#0b0f14"; c.beginPath(); c.roundRect(tx, ty, width, 24, 5); c.fill();
+    c.fillStyle = ink; c.textAlign = "left"; c.fillText(text, tx + 6, ty + 16);
+  };
+  c.save();
+  c.beginPath(); c.rect(left, top, (right - left) * reveal, bottom - top); c.clip();
+  if (d.band) {
+    c.fillStyle = "rgba(230,237,243,.08)";
+    c.fillRect(left, y(d.band[1]), right - left, y(d.band[0]) - y(d.band[1]));
+  }
+  const dot = (px, py, color) => {
+    c.beginPath(); c.arc(px, py, 4, 0, Math.PI * 2);
+    c.fillStyle = color; c.fill(); c.strokeStyle = "#0b0f14"; c.lineWidth = 2; c.stroke();
+  };
+  if (!d.dual) {
+    c.strokeStyle = d.id === "bounce" ? "#34d399" : "#f59e0b"; c.lineWidth = 2;
+    c.beginPath();
+    let connected = false;
+    d.visiblePoints.forEach(p => {
+      if (p.value == null || !Number.isFinite(p.value)) { connected = false; return; }
+      if (connected) c.lineTo(x(p.t), y(p.value)); else c.moveTo(x(p.t), y(p.value));
+      connected = true;
+    });
+    c.stroke();
+  } else d.visiblePoints.forEach(p => { if (p.value != null) dot(x(p.t), y(p.value), p.color); });
+  if (d.id === "bounce") {
+    const strides = measurement.strides;
+    let previousLabelRight = -Infinity;
+    const inWindow = p => p && p.t >= d.start && p.t <= d.start + d.duration;
+    strides.filter(s => s.foot === strides[0]?.foot)
+      .sort((a, b) => a.top - b.top).forEach(s => {
+        const a = d.points[s.top], b = d.points[s.bottom];
+        if (a?.value == null || b?.value == null || !(inWindow(a) || inWindow(b))) return;
+        const px = x(a.t), ya = y(a.value), yb = y(b.value);
+        c.strokeStyle = "#8b98a5"; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(px, ya); c.lineTo(px, yb); c.stroke();
+        if (inWindow(a)) dot(px, ya, "#34d399");
+        if (inWindow(b)) dot(x(b.t), yb, "#34d399");
+        if (!inWindow(a)) return;
+        const text = `${(s.value * 100).toFixed(1)}%`;
+        c.font = "12px sans-serif";
+        const width = c.measureText(text).width + 12;
+        const labelLeft = Math.max(left, Math.min(right - width, px - width / 2));
+        // Skip labels that collide with the preceding visible stride label.
+        const labelTop = Math.max(top + 2, ya - 27);
+        if (labelLeft <= previousLabelRight + 6 || labelLeft + width > left + (right - left) * reveal) return;
+        textPill(text, labelLeft, labelTop, "left", "#e6edf3");
+        previousLabelRight = labelLeft + width;
+      });
+  }
+  c.restore();
+  c.globalAlpha = fade;
+  if (d.reference != null) {
+    c.strokeStyle = "#8b98a5"; c.lineWidth = 1.5; c.setLineDash([6, 5]);
+    c.beginPath(); c.moveTo(left, y(d.reference)); c.lineTo(right, y(d.reference)); c.stroke();
+    c.setLineDash([]);
+    textPill(d.referenceLabel, right, y(d.reference) - 27);
+  } else if (d.referenceLabel) textPill(d.referenceLabel, right, top - 44);
+  c.globalAlpha = 1;
+  if (!d.visiblePoints.some(p => p.value != null)) {
+    c.fillStyle = "#e6edf3"; c.textAlign = "center";
+    c.fillText("No measurement data available", (left + right) / 2, (top + bottom) / 2);
+  }
+  if (chartHover && currentBeat() === "chart") {
+    const candidates = d.visiblePoints.filter(p => p.value != null && x(p.t) <= left + (right - left) * reveal);
+    const nearest = candidates.reduce((a, b) => !a || Math.abs(x(b.t) - chartHover.x) < Math.abs(x(a.t) - chartHover.x) ? b : a, null);
+    if (nearest) {
+      c.strokeStyle = "#8b98a5"; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x(nearest.t), top); c.lineTo(x(nearest.t), bottom); c.stroke();
+      textPill(`${nearest.t.toFixed(2)} s · ${nearest.value.toFixed(1)} ${d.unit}`,
+        x(nearest.t) + 8, chartHover.y - 30, "left", "#e6edf3");
+    }
+  }
+}
+
 function startScene(next) {
   if (freezeUntil) {
     freezeUntil = 0;
@@ -277,6 +520,15 @@ function startScene(next) {
   frozenStrikes.clear();
   scene = next;
   sceneElapsed = 0;
+  resetChartHover();
+  syncBeat();
+  chartProgress.style.width = "0%";
+  chartPanel.style.setProperty("--scene-accent", scene?.accent || "#22d3ee");
+  chartData = scene && scene.id !== "summary" ? buildChart(scene.id) : null;
+  chartCanvas.setAttribute("aria-label", chartData ? `${chartData.title}: ${scene.value(measurement.report)}` : "Measurement over time");
+  chartPanel.hidden = !chartData;
+  chartPanel.style.opacity = "1";
+  chartPanel.style.pointerEvents = chartData ? "auto" : "none";
   sceneCard.hidden = !scene;
   document.querySelector("#video-stage").classList.toggle("has-scene", !!scene);
   label.hidden = !!scene;
@@ -461,6 +713,7 @@ function drawBounce(ctx, frame, index) {
 window.__runform = Object.freeze({
   get phase() { return phase; },
   get scene() { return scene?.id ?? null; },
+  get beat() { return currentBeat(); },
   get frameIndex() { return frameIndex; },
   get camera() { return {...camera}; }
 });
@@ -516,6 +769,9 @@ function resizeCanvas() {
   canvas.width = Math.round(stageWidth * ratio);
   canvas.height = Math.round(stageHeight * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  chartCanvas.width = Math.round(stageWidth * ratio);
+  chartCanvas.height = Math.round(stageHeight * ratio);
+  chartCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   // Ambient fill needs no high-DPI detail beneath its blur.
   backdrop.width = Math.max(1, Math.round(stageWidth / 2));
   backdrop.height = Math.max(1, Math.round(stageHeight / 2));
@@ -625,10 +881,28 @@ function draw(frame, jointProgress, boneProgress) {
 function tick(now) {
   const wallDelta = Math.max(0, now - lastTime);
   const delta = Math.min(100, wallDelta);
-  if (scene && !userPaused && (freezeUntil || (!video.paused && !video.seeking))) {
+  if (chartHover?.expiresAt != null && now >= chartHover.expiresAt) resetChartHover();
+  if (chartHover) {
+    const bounds = plotBounds();
+    if (chartHover.x < bounds.left || chartHover.x > bounds.right ||
+        chartHover.y < bounds.top || chartHover.y > bounds.bottom) resetChartHover();
+  }
+  if (scene && !userPaused && !(currentBeat() === "chart" && chartHover) &&
+      (freezeUntil || (!video.paused && !video.seeking))) {
     sceneElapsed += wallDelta;
-    if (sceneElapsed >= 8000) startScene(scenes[scenes.indexOf(scene) + 1] || null);
-    progressFill.style.width = `${clamp(sceneElapsed / 8000) * 100}%`;
+    const duration = scene.id === "summary" ? 8000 : 11000;
+    if (sceneElapsed >= duration) startScene(scenes[scenes.indexOf(scene) + 1] || null);
+    progressFill.style.width = `${clamp(sceneElapsed / (scene?.id === "summary" ? 8000 : 11000)) * 100}%`;
+  }
+  syncBeat();
+  chartProgress.style.width = scene ? `${clamp(sceneElapsed / (scene.id === "summary" ? 8000 : 11000)) * 100}%` : "0%";
+  if (chartData) {
+    const fade = clamp((sceneElapsed - 4000) / 250);
+    chartPanel.hidden = fade >= 1;
+    chartPanel.style.opacity = String(1 - fade);
+    chartPanel.style.pointerEvents = currentBeat() === "chart" ? "auto" : "none";
+    if (currentBeat() !== "chart") resetChartHover();
+    if (!chartPanel.hidden) drawChart();
   }
   lastTime = now;
   label.style.visibility = phase === "title" ? "hidden" : "";
@@ -662,7 +936,7 @@ function tick(now) {
     freezeUntil = 0;
     if (!userPaused) video.play().catch(() => {});
   }
-  if (scene?.id === "knee" && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
+  if (scene?.id === "knee" && currentBeat() === "video" && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
     // A natural loop starts a new pass; explicit seeks only move the cursor.
     if (frameIndex < previousFrame) frozenStrikes.clear();
     const strikeIndex = measurement.strikes.findIndex((strike, i) =>
