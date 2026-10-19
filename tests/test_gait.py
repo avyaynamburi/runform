@@ -27,10 +27,28 @@ def test_missing_heel_frames(make_landmarks):
     strikes = detect_foot_strikes(landmarks)
     assert 13 <= len(strikes) <= 15
     assert all(strike.foot == "left" for strike in strikes)
-    assert abs(cadence(strikes, 30) - 85) <= 2
+    assert abs(cadence(strikes, 30) - 170) <= 3
 
 
 def test_no_pose(make_landmarks):
     landmarks = make_landmarks(300, 30)
     landmarks.data[:] = np.nan
     assert detect_foot_strikes(landmarks) == []
+
+
+def test_double_heel_peaks(make_landmarks):
+    landmarks = make_landmarks(300, 30, cadence_spm=170, double_bump=True)
+    assert abs(cadence(detect_foot_strikes(landmarks), 30) - 170) <= 3
+
+
+def test_cadence_requires_same_foot_interval():
+    assert cadence([Strike(0, "left"), Strike(10, "right")], 30) is None
+
+
+def test_cadence_uses_median_same_foot_intervals():
+    strikes = [
+        Strike(0, "left"), Strike(10, "right"), Strike(20, "left"),
+        Strike(30, "right"), Strike(40, "left"), Strike(45, "left"),
+        Strike(50, "right"), Strike(60, "left"),
+    ]
+    assert cadence(strikes, 30) == 180

@@ -43,13 +43,18 @@ def detect_foot_strikes(lm: Landmarks) -> list[Strike]:
             mode="valid",
         )
         peaks, _ = find_peaks(
-            smoothed, distance=max(1, 0.25 * lm.fps), prominence=0.02 * body_height
+            smoothed, distance=max(1, 0.4 * lm.fps), prominence=0.02 * body_height
         )
         strikes.extend(Strike(int(frame), foot) for frame in peaks)
     return sorted(strikes, key=lambda strike: strike.frame)
 
 
 def cadence(strikes: list[Strike], fps: float) -> float | None:
-    if len(strikes) < 2:
+    intervals = []
+    for foot in {strike.foot for strike in strikes}:
+        frames = sorted(strike.frame for strike in strikes if strike.foot == foot)
+        intervals.extend(np.diff(frames))
+    if not intervals:
         return None
-    return (len(strikes) - 1) / ((strikes[-1].frame - strikes[0].frame) / fps) * 60
+    median_interval = float(np.median(intervals))
+    return 2 * 60 / (median_interval / fps)
