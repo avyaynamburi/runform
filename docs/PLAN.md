@@ -225,6 +225,7 @@ src/runform/
 | W6 | Chart beats: each scene opens with its graph, then the zoomed video | done (superseded by W7) |
 | W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | done |
 | W8 | Speed ramps: slow-mo on key moments, fast transitions | done |
+| W9 | Locked framing per scene; tour ends on the summary | todo |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
@@ -468,6 +469,31 @@ src/runform/
     - the knee pill and history don't overlap, and the lean dial isn't clipped
     - no console errors
 - Out of scope: API changes, audio.
+
+### W9 — Locked framing per scene; tour ends on the summary
+- Why: user feedback was that the per-frame auto-tracking zoom keeps shifting, which makes it hard to watch. Pick one framing per scene and hold it. Also, after the tour the page should stay on the summary instead of dropping into free mode.
+- Goal: each scene holds a fixed, steady shot, and the camera moves only during the glide between scenes. When the tour finishes, the summary stays on screen.
+- Files: `src/runform/static/app.js`, `tests/test_web.py` (only if an assertion needs updating)
+- Steps:
+  - **Fixed framings:** when the stage starts, compute one framing per scene and one for the intro close-up, from the **whole clip**:
+    - For the focus joints, take the 5th–95th percentile of x and of y over every non-null frame. Pad as now (25%; bounce adds 40% vertically). Then scale = `0.8 · min(1/boxW, 1/boxH)` with the aspect handled as now, clamped to [1, 2.6], and the center clamped as now.
+    - Cache these framings. Remove the per-frame focus box and its EMA tracking entirely.
+  - **Camera moves only between framings:** when the target framing changes (intro → cadence → … → summary, or a chip jump), glide to it over 1.1 s with ease-in-out cubic. Within a scene the camera is exactly constant. Remove the knee "camera punch"; keep the white flash. Keep the intro pull-back from the close-up to full frame, as one deliberate move.
+  - **The tour ends on the summary:** the summary scene has no end. After the bounce scene it stays on the summary indefinitely:
+    - the lower-third with the four values stays visible
+    - the camera stays at full frame and the skeleton at full opacity
+    - the video keeps looping at the summary rate
+    - the letterbox bars stay
+    There's no automatic switch to free "Live tracking" mode anymore. The chips still jump to any scene, and choosing Summary again just stays there. Replay intro still restarts everything.
+  - Reduced motion: the glides snap.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - Lead checks in headless Chrome with the sample clip:
+    - sampling `camera` every 100 ms for 3 s in the middle of each scene shows it unchanged (to within 1e-6)
+    - the transitions take about 1.1 s
+    - 20 s after the summary starts, the scene is still `summary`, the lower-third is visible, and the video is still playing
+    - no console errors
+- Out of scope: API changes.
 
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
