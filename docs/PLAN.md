@@ -50,7 +50,7 @@ Data flow: `video` → `pose` → `smoothing` → `gait` + `metrics` → `report
 
 Landmark indices are the MediaPipe Pose standard: 11/12 shoulders, 23/24 hips, 25/26 knees, 27/28 ankles, 29/30 heels, 31/32 foot index. Image y increases downward.
 
-**Foot-strike heuristic (v1):** for each foot, take the heel's y coordinate, smooth it, and find local maxima (lowest points in the image) with a minimum spacing of 0.25 s and prominence of at least 2% of body height. Each maximum is a strike for that foot. Cadence is the total number of strikes divided by the duration between the first and last strike, times 60.
+**Foot-strike heuristic (v1):** for each foot, take the heel's y coordinate, smooth it, and find local maxima (lowest points in the image) with a minimum spacing of 0.25 s and prominence of at least 2% of body height. Each maximum is a strike for that foot. Cadence is (number of strikes − 1) divided by the time from the first strike to the last, times 60.
 
 ## Tasks: vertical tracer bullets (Codex)
 
@@ -90,12 +90,22 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Goal: the report gains `cadence_spm` and `strikes_detected`.
 - Files: `src/runform/gait.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_gait.py`, `tests/test_cli.py`
 - Steps:
-  - The fixture gains `cadence_spm` and a `noise` parameter. The two heels follow alternating sine waves.
-  - Foot strikes use the heuristic described in Architecture above.
+  - Fixture: `make_landmarks(n_frames, fps, cadence_spm=None, noise=0.0, seed=0)`. With `cadence_spm=None` it stays the static pose from T1. Otherwise the heels (29 left, 30 right) have `y = 0.92 + 0.04 * sin(2π · (cadence_spm/2/60) · t + phase)`, with the right foot's phase offset by π, so each foot strikes at half the cadence. `noise` adds seeded Gaussian noise (that std, in normalized units) to every x and y.
+  - `gait.py`:
+    - `Strike` is a dataclass with `frame: int` and `foot: str` (`"left"` / `"right"`).
+    - `detect_foot_strikes(lm: Landmarks) -> list[Strike]`, sorted by frame. Body height = median over frames of (ankle-mid y − shoulder-mid y). For each heel's y series:
+      1. Linearly interpolate NaN frames (a series that is all NaN gives no strikes).
+      2. Smooth with a centered moving average about 0.1 s wide.
+      3. Run `scipy.signal.find_peaks` with `distance = 0.25 · fps` and `prominence = 0.02 · body height`.
+    - `cadence(strikes, fps) -> float | None` = `(len(strikes) − 1) / ((last.frame − first.frame) / fps) · 60`, or `None` when there are fewer than 2 strikes.
+  - The report gains `strikes_detected` (int) and `cadence_spm` (float rounded to 1 decimal, or JSON `null`). The text summary gains a cadence line.
 - Acceptance:
   - `ruff check . && pytest -q`.
-  - At 170 spm and 30 fps, the CLI test gets cadence within ±3 spm.
-  - `test_gait.py` checks that strikes alternate between the left and right foot.
+  - CLI test: a 10 s fixture at 170 spm and 30 fps gives `cadence_spm` within ±3 and `strikes_detected` of 27–29. The existing T1 CLI test (static pose) still passes and now also asserts `strikes_detected == 0` and `cadence_spm is None`.
+  - `test_gait.py`:
+    - strikes alternate between the left and right foot
+    - with `noise=0.005`, cadence is still within ±3 spm of 170
+    - the static pose gives no strikes, and `cadence([...one strike...], 30)` is `None`
 - Out of scope: smoothing beyond what strike detection itself needs.
 
 ### T3 — Trunk lean

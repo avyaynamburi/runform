@@ -37,8 +37,8 @@ Read by Codex and by the lead. Plan and task list: `docs/PLAN.md`.
    - once `samples/side_run.mp4` exists, the CLI smoke test: `runform analyze samples/side_run.mp4`
 6. **Decide.**
    - **Pass:** commit as `T<n>: <goal>`, with Codex's task note as the commit body. Then mark the task done in `docs/PLAN.md`.
-   - **Fail:** send Codex specific, numbered fixes and go back to step 4. After 2 failed rounds, stop and ask the user. Don't keep looping.
-7. **Report.** Lead tells the user what passed, what was reviewed, and any concerns. Then it waits for the go-ahead before the next task.
+   - **Fail:** send Codex specific, numbered fixes and go back to step 4. After 2 failed rounds, Lead re-cuts the task (smaller slice or clearer spec) instead of looping on the same one.
+7. **Report and continue.** Lead logs what passed, what was reviewed, and any concerns in the commit body, then moves straight to the next task. The user is not in the loop. Lead makes the decisions and only stops to ask when a decision truly needs the user (something only they can provide or verify, such as a new sample clip or a manual cadence count).
 
 ## Task template
 ```
