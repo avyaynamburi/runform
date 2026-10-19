@@ -142,12 +142,19 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Out of scope: per-stride lean, smoothing, and any other metric.
 
 ### T4 — Knee flexion at foot strike
-- Goal: the report gains `knee_flexion_at_strike_deg` with `mean` and `std`.
+- Goal: the report gains `knee_flexion_at_strike_deg` = `{"mean": float, "std": float}` (degrees, 180 = straight leg, rounded to 1 decimal), or null when there are no strikes with valid landmarks.
 - Files: `src/runform/metrics.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_metrics.py`, `tests/test_cli.py`
+- Steps:
+  - `joint_angle(a, b, c, aspect=1.0) -> np.ndarray`: the angle at `b` in degrees. Each argument is an (..., 2) array of normalized x, y. Multiply x by `aspect` before computing. Return NaN for NaN input or a zero-length segment.
+  - `knee_flexion_at_strikes(lm, strikes) -> np.ndarray`: one angle per strike, using the landing leg (left: 23/25/27, right: 24/26/28) at `strike.frame`. Strikes whose angle is NaN are dropped.
+  - The report takes the mean and the population std (`ddof=0`) of that array.
+  - Fixture: add `knee_deg=180.0`. Both thigh and shank are 0.2 tall, so the knee is moved forward (+x) by `0.2 · tan(radians((180 − knee)/2)) / aspect` to get that knee angle. When `cadence_spm` is set, the knee angle varies per leg in step with its heel: `knee_deg − 20 · (1 − sin(ωt + phase))`. It equals `knee_deg` exactly at strike and is more bent in between, so only sampling at the strike gives the right answer. With no cadence it's constant.
 - Acceptance:
   - `ruff check . && pytest -q`.
-  - The fixture's knee angle at strike comes out within ±2°.
-  - `joint_angle` unit tests: a right angle gives 90° and collinear points give 180°.
+  - CLI test: `cadence_spm=170, knee_deg=165, aspect=720/1008` gives mean within 165 ± 2 and std < 2. The static-pose CLI test asserts the field is null.
+  - `test_metrics.py`: `joint_angle` gives 90 for a right angle and 180 for collinear points. An aspect-dependent case: the same normalized points give a different angle at aspect 0.5. NaN input gives NaN.
+  - `test_metrics.py`: `knee_flexion_at_strikes` uses the correct leg. Make the left knee 150 and the right knee 170 for a direct-call check.
+- Out of scope: other joint angles, smoothing, and peak knee flexion in swing.
 
 ### T5 — Vertical oscillation
 - Goal: the report gains `vertical_oscillation_rel`, the bounce per stride divided by body height.
