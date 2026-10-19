@@ -90,3 +90,7 @@ button:disabled { opacity: .45; cursor: default; }
 #title-card strong { color: #22d3ee; font-size: clamp(28px, 6vw, 64px); letter-spacing: .25em; text-shadow: 0 0 30px #22d3ee88; }
 #title-detail { font: clamp(9px, 2vw, 14px) ui-monospace, monospace; color: #a9bbc8; min-height: 1.2em; }
 @media (prefers-reduced-motion: reduce) { .letterbox { transition: none; } }
+
+#speed-marker { position: absolute; right: 12px; top: calc(6% + 8px); padding: 6px 9px; border-radius: 20px; background: #0b1725dd; color: #e6edf3; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; opacity: 0; transition: opacity .2s; }
+#speed-marker.visible { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { #speed-marker { display: none; } }

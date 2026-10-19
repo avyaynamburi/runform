@@ -226,6 +226,73 @@ const lowerThird = document.querySelector("#lower-third");
 let flashStart = -Infinity;
 let leanEMA = null;
 let drawDelta = 0;
+let baseRate = .5;
+let rate = video.playbackRate;
+let lastWrittenRate = rate;
+let transitionIn = false;
+let tourStart = false;
+let settledAt = null;
+let markerActive = false;
+const speedMarker = document.querySelector("#speed-marker");
+const smoothstep = t => { t = clamp(t); return t * t * (3 - 2 * t); };
+
+// All floating HUD coordinates are in stage pixels.
+function safeArea() {
+  const bar = scene ? document.querySelector("#letterbox-top").offsetHeight : 0;
+  const bottomBar = scene ? document.querySelector("#letterbox-bottom").offsetHeight : 0;
+  const lower = scene ? lowerThird.offsetTop : stageHeight - bottomBar;
+  return {left: 8, right: stageWidth - 8, top: bar + 8,
+    bottom: Math.max(bar + 8, Math.min(stageHeight - bottomBar, lower) - 8)};
+}
+function hudPosition(x, y, width, height) {
+  const area = safeArea();
+  return [Math.max(area.left, Math.min(area.right - width, x)),
+    Math.max(area.top, Math.min(area.bottom - height, y))];
+}
+function rateMultiplier() {
+  if (reducedMotion.matches || phase !== "live" || !scene) return 1;
+  const ahead = frameIndex + 2;
+  const proximity = (events, minimum, core) => {
+    const distance = events.reduce((nearest, frame) => Math.min(nearest, Math.abs(frame - ahead)), Infinity);
+    return minimum + (1 - minimum) * smoothstep((distance - core) / (6 - core));
+  };
+  let multiplier = 1;
+  if (scene.id === "cadence") {
+    multiplier = proximity(measurement.strikes.filter(s => s.foot === "left").map(s => s.frame), .35, 3);
+  } else if (scene.id === "trunk-lean") multiplier = .8;
+  else if (scene.id === "knee") multiplier = proximity(measurement.strikes.map(s => s.frame), .3, 0);
+  else if (scene.id === "bounce") {
+    multiplier = proximity(measurement.strides.filter(s => s.foot === measurement.strides[0]?.foot).map(s => s.top), .4, 3);
+  } else if (scene.id === "summary") multiplier = 1 + smoothstep(sceneElapsed / 1000);
+  if (tourStart) {
+    // Finish the opening ramp before smoothly introducing landing slow motion.
+    multiplier = sceneElapsed < 1500 ? .4 + .6 * smoothstep(sceneElapsed / 1500)
+      : 1 + (multiplier - 1) * smoothstep((sceneElapsed - 1500) / 300);
+  }
+  const remaining = sceneDuration() - sceneElapsed;
+  const bump = transitionIn && sceneElapsed < 700 ? 1 - smoothstep(sceneElapsed / 700)
+    : remaining < 600 ? smoothstep(1 - remaining / 600) : 0;
+  return multiplier + (3 - multiplier) * bump;
+}
+function updateRate(dt, now) {
+  const target = Math.max(.0625, Math.min(3, baseRate * rateMultiplier()));
+  if (!video.paused) {
+    rate += (target - rate) * (1 - Math.exp(-dt / 180));
+    if (Math.abs(rate - lastWrittenRate) > .01) {
+      video.playbackRate = rate;
+      lastWrittenRate = video.playbackRate;
+    }
+  }
+  const effective = video.playbackRate;
+  const visible = phase === "live" && !reducedMotion.matches;
+  speedMarker.hidden = !visible;
+  if (!visible) { settledAt = null; markerActive = false; }
+  else if (Math.abs(rate - baseRate) > .05) { settledAt = null; markerActive = true; }
+  else if (markerActive && settledAt === null) settledAt = now;
+  else if (settledAt !== null && now - settledAt >= 600) markerActive = false;
+  speedMarker.classList.toggle("visible", visible && markerActive);
+  speedMarker.textContent = effective < .6 * baseRate ? `SLOW-MO ${effective.toFixed(2)}×` : `${effective.toFixed(1)}×`;
+}
 const ease = t => 1 - (1 - t) ** 3;
 const sceneDuration = () => scene?.id === "summary" ? 7000 : 9000;
 const sceneChips = document.querySelector("#scene-chips");
@@ -291,7 +358,9 @@ function updateLowerThird() {
   });
 }
 
-function startScene(next) {
+function startScene(next, incoming = true) {
+  transitionIn = !!next && incoming;
+  tourStart = !!next && !incoming;
   if (freezeUntil) {
     freezeUntil = 0;
     if (!userPaused) video.play().catch(() => {});
@@ -329,7 +398,6 @@ function startScene(next) {
     document.querySelector("#scene-title").textContent = `0${scenes.indexOf(scene) + 1} · ${scene.id === "bounce" ? "Bounce" : scene.id === "summary" ? "Summary" : scene.title}`;
     document.querySelector("#scene-value").textContent = scene.value(measurement.report);
     document.querySelector("#scene-caption").textContent = scene.caption;
-    setSpeed(0.5);
   }
 }
 
@@ -352,8 +420,8 @@ function drawCadence(ctx, frame, index) {
   if (!feet.length) return;
   const width = stageWidth * .6;
   const center = feet.reduce((sum, p) => sum + p[0], 0) / feet.length;
-  const left = Math.max(8, Math.min(stageWidth - width - 8, center - width / 2));
-  const top = Math.max(stageHeight * .08, Math.min(stageHeight * .6 - 44, Math.max(...feet.map(p => p[1])) + 18));
+  const [left, boxTop] = hudPosition(center - width / 2, Math.max(...feet.map(p => p[1])), width, 62);
+  const top = boxTop + 18;
   ctx.fillStyle = "rgba(11,23,37,.7)";
   ctx.beginPath(); ctx.roundRect(left, top, width, 44, 8); ctx.fill();
   ctx.save(); ctx.beginPath(); ctx.rect(left, top, width, 44); ctx.clip();
@@ -401,8 +469,8 @@ function drawTrunkLean(ctx, frame, index) {
   ctx.beginPath(); ctx.arc(...hip, radius, -Math.PI / 2, end, dx < 0); ctx.stroke();
   const value = measurement.series.trunk_lean_deg[index];
   if (value != null) leanEMA = leanEMA == null ? value : leanEMA + (value - leanEMA) * (1 - Math.exp(-drawDelta / 150));
-  const x = Math.max(58, Math.min(stageWidth - 58, shoulder[0] + facing(frame) * 70));
-  const y = Math.max(76, Math.min(stageHeight * .6 - 30, shoulder[1] - 30));
+  const [left, top] = hudPosition(shoulder[0] + facing(frame) * 70 - 55, shoulder[1] - 85, 110, 110);
+  const x = left + 55, y = top + 55;
   ctx.fillStyle = "rgba(11,23,37,.7)";
   ctx.beginPath(); ctx.arc(x, y, 55, 0, Math.PI * 2); ctx.fill();
   const angle = v => Math.PI + clamp(v / 20) * Math.PI;
@@ -433,8 +501,7 @@ function pill(ctx, text, x, y, accent) {
   ctx.font = "bold 15px monospace";
   ctx.textBaseline = "top";
   const width = ctx.measureText(text).width + 12;
-  x = Math.max(0, Math.min(x, stageWidth - width));
-  y = Math.max(0, Math.min(y, stageHeight - 27));
+  [x, y] = hudPosition(x, y, width, 27);
   ctx.fillStyle = "rgba(11, 23, 37, 0.85)";
   ctx.beginPath(); ctx.roundRect(x, y, width, 27, 6); ctx.fill();
   ctx.fillStyle = accent;
@@ -449,6 +516,16 @@ function facing(frame) {
 
 function drawKnee(ctx, frame, index) {
   const alpha = ctx.globalAlpha;
+  const direction = facing(frame);
+  const area = safeArea();
+  const historyWidth = 85, pillWidth = 66, gap = 88;
+  const latest = measurement.strikes.filter(s => s.frame <= index).at(-1);
+  const anchor = frame?.[latest?.foot === "right" ? 26 : 25];
+  const kneeX = anchor ? project(anchor)[0] : stageWidth / 2;
+  const divider = Math.max(area.left + (direction > 0 ? historyWidth : pillWidth) + gap / 2,
+    Math.min(area.right - (direction > 0 ? pillWidth : historyWidth) - gap / 2, kneeX));
+  const pillX = direction > 0 ? divider + gap / 2 : divider - gap / 2 - pillWidth;
+  const historyX = direction > 0 ? divider - gap / 2 - historyWidth : divider + gap / 2;
   measurement.strikes.forEach((strike, i) => {
     const age = index - strike.frame;
     if (age < 0 || age > 15) return;
@@ -466,7 +543,7 @@ function drawKnee(ctx, frame, index) {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(...knee, radius, a, a + sweep, sweep < 0); ctx.stroke();
     const value = measurement.series.knee_at_strike_deg[i];
-    if (value != null) pill(ctx, `${Math.round(value)}°`, knee[0] + 34, knee[1] - 14, "#f472b6");
+    if (value != null) pill(ctx, `${Math.round(value)}°`, pillX, knee[1] - 14, "#f472b6");
   });
   ctx.globalAlpha = alpha;
   const history = measurement.strikes.map((strike, i) => ({...strike, value: measurement.series.knee_at_strike_deg[i]}))
@@ -474,8 +551,8 @@ function drawKnee(ctx, frame, index) {
   const kneeId = history[0]?.foot === "left" ? 25 : 26;
   if (frame?.[kneeId]) {
     const knee = project(frame[kneeId]);
-    const x = Math.max(12, Math.min(stageWidth - 85, knee[0] - facing(frame) * 60));
-    const y = Math.max(24, Math.min(stageHeight * .6 - 90, knee[1]));
+    const [x, y] = hudPosition(historyX, knee[1], historyWidth, history.length * 19);
+    ctx.textBaseline = "top";
     history.forEach((strike, i) => {
       ctx.globalAlpha = alpha * (1 - i * .18);
       ctx.font = `${i ? 13 : 15}px monospace`; ctx.fillStyle = i ? "#c9d4df" : "#f472b6";
@@ -530,9 +607,8 @@ function drawBounce(ctx, frame, index) {
     const text = `${(s.value * 100).toFixed(1)}%`;
     ctx.font = "12px monospace"; ctx.textBaseline = "top";
     const width = ctx.measureText(text).width + 12;
-    const left = px - width / 2;
-    if (left < 0 || left + width > stageWidth || left <= labelRight + 6) return;
-    const y = Math.max(8, top[1] - 26);
+    const [left, y] = hudPosition(px - width / 2, top[1] - 26, width, 22);
+    if (left <= labelRight + 6) return;
     ctx.fillStyle = "rgba(11,23,37,.85)";
     ctx.beginPath(); ctx.roundRect(left, y, width, 22, 5); ctx.fill();
     ctx.fillStyle = "#e6edf3"; ctx.fillText(text, left + 6, y + 5);
@@ -546,13 +622,16 @@ window.__runform = Object.freeze({
   get phase() { return phase; },
   get scene() { return scene?.id ?? null; },
   get frameIndex() { return frameIndex; },
-  get camera() { return {...camera}; }
+  get camera() { return {...camera}; },
+  get rate() { return video.playbackRate; }
 });
 
 function clearStage() {
   cancelAnimationFrame(animation);
   phase = "idle";
   titleCard.hidden = true;
+  speedMarker.hidden = true;
+  speedMarker.classList.remove("visible");
   backdrop.hidden = true;
   backdropTick = 0;
   backdropCtx.clearRect(0, 0, backdrop.width, backdrop.height);
@@ -610,7 +689,7 @@ window.addEventListener("resize", resizeCanvas);
 new ResizeObserver(resizeCanvas).observe(video);
 
 function setSpeed(speed) {
-  video.playbackRate = speed;
+  baseRate = speed;
   document.querySelectorAll("[data-speed]").forEach(button => {
     button.setAttribute("aria-pressed", String(Number(button.dataset.speed) === speed));
   });
@@ -621,7 +700,7 @@ function goLive() {
   veil.style.opacity = "0";
   label.textContent = "Live tracking";
   sceneChips.querySelectorAll("button").forEach(chip => { chip.disabled = false; });
-  startScene(scenes[0]);
+  startScene(scenes[0], false);
   playButton.disabled = false;
   replayButton.disabled = false;
   video.play().catch(() => { playButton.textContent = "Play"; });
@@ -765,6 +844,7 @@ function tick(now) {
       video.currentTime = (frameIndex + .5) / pose.fps;
     }
   }
+  updateRate(wallDelta, now);
   previousFrame = frameIndex;
   const frame = pose.frames[frameIndex];
   if (frame) { lastPose = frame; opacity = Math.min(1, opacity + delta / 120); }
