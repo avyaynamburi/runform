@@ -221,6 +221,8 @@ src/runform/
 | W2 | Skeleton overlay + draw-in intro | done |
 | W3 | Explainers: cadence + trunk lean | done |
 | W4 | Explainers: knee at strike + vertical oscillation; polish | done |
+| W5 | Cinematic camera: title card, zooms per scene | todo |
+| W6 | Chart beats: each scene opens with its graph, then the zoomed video | todo |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
@@ -321,6 +323,59 @@ src/runform/
   - `test_web.py`: `knee_at_strike_deg` has the same length as `strikes`, and with the fixture `knee_deg=165` the values are about 165. `strides` values have the right length and the right top and bottom ordering. The fixture at `hip_amp=0.015` gives values of about 0.05.
   - Lead checks in headless Chrome with the sample clip: screenshots of the knee freeze, the oscillation wave and the summary. No console errors.
 - Out of scope: new metrics, exporting or sharing, and any change to how the stat cards look.
+
+### W5 — Cinematic camera: title card and per-scene zooms
+- Goal: the intro and tour feel like a film. A title card leads into a close-up that pulls back while the skeleton draws, and every scene smoothly pans and zooms to the body part it measures.
+- Files: `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`
+- Steps:
+  - **Camera model:** `camera = {cx, cy, scale}` in normalized picture coordinates. The `<video>` gets a CSS transform from the camera (`transform-origin: 0 0`). The stage has `overflow: hidden`. The canvas is **not** transformed. It stays full-size and draws every point through `project([x, y]) -> [px, py]`, using the same camera math, so lines stay crisp and the same width at any zoom. All existing drawing code goes through `project`.
+  - **Smoothing:** each frame the camera eases toward its target: `cam += (target − cam) · (1 − exp(−dt / 350 ms))`. The target is the current focus box, recomputed every frame from that frame's landmarks and smoothed by an EMA with τ = 250 ms, so it follows a runner who moves across the frame and doesn't jitter on a treadmill. Scale = `0.8 · min(1/boxW, 1/boxH)`, clamped to [1, 2.6]. The center is clamped so the view never shows outside the picture.
+  - **Focus regions** (union bbox of the joints, padded 25%):
+    - intro close-up: torso and head (0, 11, 12, 23, 24)
+    - cadence: feet (27–32)
+    - trunk lean: torso (0, 11, 12, 23, 24)
+    - knee: legs (23–32)
+    - bounce: hips and torso (11, 12, 23, 24), with extra vertical padding of 40% so the bounce has room
+    - summary and free live mode: the full picture (scale 1)
+  - **Title card** (before the intro): about 1.6 s on a black stage. A "RUNFORM" wordmark fades up, then a mono line types in: "{frames_total} frames · {fps} fps · 33 points per frame". It cross-fades into the video, already zoomed on the torso.
+  - **Intro:** while the joints pop and the bones draw, the camera pulls back from the torso close-up to full body. Then the tour begins.
+  - **Look:** a subtle vignette over the stage (CSS radial gradient), plus thin cinematic letterbox bars (about 6% of stage height) that slide in during the tour and out in free mode.
+  - `prefers-reduced-motion`: no title animation, no camera easing (it snaps), no letterbox slide.
+  - Debug hook: add `camera` (a copy of `{cx, cy, scale}`).
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`. `test_web.py` asserts that the served index contains the camera and title elements. There's no new API data in this slice.
+  - Lead checks in headless Chrome with the sample clip: the title card, the torso close-up at the start of the intro (scale > 1.5), full body after the intro, and each scene's zoom (`camera.scale` > 1.2 for cadence, lean, knee and bounce, and 1 for summary). Screenshots show the overlay still lying on the body while zoomed. No console errors.
+- Out of scope: charts (W6).
+
+### W6 — Chart beats: each scene opens with its graph, then the zoomed video
+- Goal: every scene first shows a full-stage animated chart of the measurement, then cuts to the zoomed video beat. Vertical oscillation gets its own graph of the hip-height wave.
+- Files: `src/runform/metrics.py`, `src/runform/web.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_metrics.py`, `tests/test_web.py`
+- Steps:
+  - `metrics.py`:
+    - Extract the duplicated body-height code into `body_height(lm) -> float` (NaN if it can't be computed), and use it in `oscillation_strides`. `gait.py` is unchanged.
+    - Add `hip_height(lm) -> np.ndarray`: per frame, `(nanmedian(hip_y) − hip_y) / body_height`. Up is positive, as a fraction of body height, with NaN where missing.
+  - API: `series.hip_height_rel` is that array, rounded to 4 decimals or null.
+  - **Scene beats:** each scene becomes `chart` (4 s) then `video` (7 s, with the W5 zoom). Chips still jump to a scene's start. The chart beat covers the stage with an opaque panel (#0b0f14). The video keeps playing hidden underneath, and the camera already eases toward the scene's focus so the cut lands zoomed in. The cut is a 250 ms cross-fade. Hovering the chart pauses the beat timer.
+  - **Chart style** (follow it exactly):
+    - Plain canvas, no libraries. 2 px lines. Markers at least 8 px in diameter with a 2 px ring in the surface color.
+    - A recessive grid (#1f2933, 1 px) and muted axis text (#8b98a5, 12 px). Axis titles in text ink, never in a series color.
+    - One y-axis only.
+    - Left/right series colors for marks are **#0e9fbf (left) and #8b5cf6 (right)** (validated for CVD on #0b0f14). Single-series charts use the scene accent.
+    - Two-series charts carry a small legend plus direct labels ("Left", "Right").
+    - Lines draw in left to right over 2 s, then annotations fade in.
+    - Hover: a crosshair plus a tooltip giving the time and value of the nearest point.
+  - **Charts:**
+    - **Cadence:** x = time (s), y = step rate per stride (`2 · 60 / interval_s` for each consecutive same-foot strike pair, placed at the later strike), as dots by foot. A dashed median line labeled "median {cadence} spm".
+    - **Trunk lean:** x = time, y = lean (°), a single amber line. A dashed mean line labeled "average {lean}°".
+    - **Knee at strike:** x = strike time, y = knee angle at strike, as dots by foot. A light band for mean ± std and a dashed mean line labeled with the value.
+    - **Bounce** (the headline chart): x = time, y = hip height as % of body height (`hip_height_rel · 100`), a single green line. For strides of the first stride's foot, put small markers at each `top` and `bottom` and a thin vertical bracket per stride. Label "average bounce {vo}% of body height".
+    - **Summary:** no chart beat; it stays as it is.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check`.
+  - `test_metrics.py`: `body_height` on the fixture is 0.6. `hip_height` on the fixture with `hip_amp=0.015` has a peak-to-peak of about 0.05 and a median of about 0. NaN frames give NaN. The existing oscillation tests are unchanged.
+  - `test_web.py`: `series.hip_height_rel` has n_frames entries, with null for NaN frames.
+  - Lead checks in headless Chrome with the sample clip: screenshots of all four chart beats and the cut into the zoomed video. Hovering shows a tooltip. No label collisions. No console errors.
+- Out of scope: new metrics, export.
 
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
