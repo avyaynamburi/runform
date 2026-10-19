@@ -22,8 +22,25 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     main(["analyze", "x.mp4", "--out", str(output)])
     assert json.loads(output.read_text()) == {
         "fps": 25.0, "frames_total": 10, "frames_with_pose": 8,
+        "strikes_detected": 0, "cadence_spm": None,
     }
     summary = capsys.readouterr().out
     assert "FPS: 25" in summary
     assert "frames total: 10" in summary
     assert "frames with pose: 8" in summary
+    assert "Cadence: unavailable" in summary
+
+
+def test_analyze_cadence(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(300, 30, cadence_spm=170)
+    monkeypatch.setattr("runform.cli.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.cli.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    report = json.loads(output.read_text())
+    assert abs(report["cadence_spm"] - 170) <= 3
+    assert 27 <= report["strikes_detected"] <= 29
+    assert report["cadence_spm"] == round(report["cadence_spm"], 1)
+    assert f"Cadence: {report['cadence_spm']} spm" in capsys.readouterr().out

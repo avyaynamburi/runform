@@ -50,7 +50,7 @@ Data flow: `video` → `pose` → `smoothing` → `gait` + `metrics` → `report
 
 Landmark indices are the MediaPipe Pose standard: 11/12 shoulders, 23/24 hips, 25/26 knees, 27/28 ankles, 29/30 heels, 31/32 foot index. Image y increases downward.
 
-**Foot-strike heuristic (v1):** for each foot, take the heel's y coordinate, smooth it, and find local maxima (lowest points in the image) with a minimum spacing of 0.25 s and prominence of at least 2% of body height. Each maximum is a strike for that foot. Cadence is (number of strikes − 1) divided by the time from the first strike to the last, times 60.
+**Foot-strike heuristic (v1):** for each foot, take the heel's y coordinate, smooth it, and find local maxima (lowest points in the image) with a minimum spacing of 0.4 s per foot (changed from 0.25 s in T2b) and prominence of at least 2% of body height. Each maximum is a strike for that foot. Cadence is 2 × 60 divided by the median stride time, where stride time is the interval between consecutive strikes of the same foot (T2b; T2 used the first-to-last strike span).
 
 ## Tasks: vertical tracer bullets (Codex)
 
@@ -61,7 +61,8 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 | Task | Slice | Status |
 |---|---|---|
 | T1 | Walking skeleton: frame counts | done |
-| T2 | Cadence | todo |
+| T2 | Cadence | done |
+| T2b | Cadence robust to double heel peaks | todo |
 | T3 | Trunk lean | todo |
 | T4 | Knee flexion at strike | todo |
 | T5 | Vertical oscillation | todo |
@@ -107,6 +108,21 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
     - with `noise=0.005`, cadence is still within ±3 spm of 170
     - the static pose gives no strikes, and `cadence([...one strike...], 30)` is `None`
 - Out of scope: smoothing beyond what strike detection itself needs.
+
+### T2b — Cadence robust to double heel peaks
+- Why: on `samples/side_run.mp4`, T2 reports 193.5 spm. The left heel's strikes are cleanly 20 frames apart (about 180 spm), but the right heel has 8 extra peaks only 9–12 frames after a real strike. The 0.25 s minimum spacing is far too loose for strikes of the *same* foot, which are at least about 0.4 s apart even at 300 spm.
+- Goal: `cadence_spm` in the report stays correct when a heel signal has a secondary bump between strikes.
+- Files: `src/runform/gait.py`, `tests/conftest.py`, `tests/test_gait.py`, `tests/test_cli.py`
+- Steps:
+  - Per-foot `find_peaks` distance becomes `0.4 · fps`. Update the Architecture paragraph's number in your head, not in the file; Lead updates PLAN.md.
+  - `cadence()` becomes robust to stray strikes: take the median interval between consecutive strikes *of the same foot* (pooled across both feet) as the stride time, and return `2 · 60 / stride_seconds`. Return `None` if no foot has 2 or more strikes. Keep the signature `cadence(strikes, fps)`.
+  - Fixture: add a `double_bump=False` option. When true, each heel gets an extra Gaussian bump (amplitude 0.03, sigma 0.03 s) 0.3 s after every one of its strikes, which mimics the real clip.
+- Acceptance:
+  - `ruff check . && pytest -q`.
+  - `test_gait.py`: with `double_bump=True` at 170 spm and 30 fps, cadence is within ±3. Existing T2 tests still pass, with the expectations for `cadence()` unit cases updated to the new definition where needed.
+  - `test_cli.py`: a new case uses `double_bump=True` at 170 spm and checks `cadence_spm` within ±3.
+  - Lead checks: `runform analyze samples/side_run.mp4` gives a cadence in the range 175–185.
+- Out of scope: general smoothing (T6) and any other metric.
 
 ### T3 — Trunk lean
 - Goal: the report gains `trunk_lean_deg` (the mean).

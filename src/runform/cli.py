@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from runform.gait import cadence, detect_foot_strikes
 from runform.pose import extract_landmarks
 from runform.report import build_report
 from runform.video import read_frames
@@ -19,9 +20,12 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     frames, fps = read_frames(args.video)
     landmarks = extract_landmarks(frames, fps, model=args.model)
-    report = build_report(landmarks)
+    strikes = detect_foot_strikes(landmarks)
+    report = build_report(landmarks, len(strikes), cadence(strikes, fps))
     args.out.write_text(json.dumps(report, indent=2) + "\n")
     print(
         f"FPS: {report['fps']:g}; frames total: {report['frames_total']}; "
         f"frames with pose: {report['frames_with_pose']}"
     )
+    cadence_text = "unavailable" if report['cadence_spm'] is None else report['cadence_spm']
+    print(f"Cadence: {cadence_text} spm")
