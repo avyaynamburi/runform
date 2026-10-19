@@ -125,12 +125,21 @@ The rules are in `AGENTS.md` under "Tracer bullets" and "Task loop." In short, e
 - Out of scope: general smoothing (T6) and any other metric.
 
 ### T3 — Trunk lean
-- Goal: the report gains `trunk_lean_deg` (the mean).
-- Files: `src/runform/metrics.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_metrics.py`, `tests/test_cli.py`
+- Goal: the report gains `trunk_lean_deg`, the mean forward lean in degrees (positive = leaning in the running direction).
+- Files: `src/runform/landmarks.py`, `src/runform/pose.py`, `src/runform/metrics.py`, `src/runform/cli.py`, `src/runform/report.py`, `tests/conftest.py`, `tests/test_metrics.py`, `tests/test_cli.py`, `tests/test_video_pose.py`
+- Steps:
+  - **Aspect ratio:** MediaPipe x is a fraction of frame width and y a fraction of frame height, so angles need the frame's aspect ratio. The sample clip is 720×1008. `Landmarks` gains `aspect: float = 1.0` (width / height); the default keeps existing constructors working. `pose.extract_landmarks` sets it from the first frame's shape (1.0 if there are no frames).
+  - `metrics.py` (pure NumPy):
+    - `facing_sign(lm) -> int`: +1 if the runner faces +x, −1 if −x. It's the sign of the nanmedian over both feet of (foot_index x − heel x) (31−29, 32−30). It returns +1 when the result is undefined or 0.
+    - `trunk_lean(lm) -> np.ndarray`: per-frame degrees, NaN where landmarks are missing. With hip-mid h and shoulder-mid s: `dx = (s.x − h.x) · aspect · facing_sign`, `dy = h.y − s.y`, and `deg = degrees(atan2(dx, dy))`.
+  - The report gains `trunk_lean_deg`: the nanmean, rounded to 1 decimal, or null if every frame is NaN. The text summary gains a trunk lean line.
+  - Fixture: `make_landmarks` gains `lean_deg=0.0` and `aspect=1.0` and puts `aspect` on the `Landmarks`. The runner faces +x: heels' x = ankle x − 0.01, and foot index (31/32) = (ankle x + 0.03, 0.93). The lean is built in pixel space: shift both shoulders' x by `tan(lean) · (hip_y − shoulder_y) / aspect`. Leave heel y as it is so the T2 tests are unaffected.
 - Acceptance:
   - `ruff check . && pytest -q`.
-  - A fixture built with a 10° lean gives 10 ± 1° in the CLI test.
-  - Unit tests: an upright trunk gives 0°, and NaN input gives NaN.
+  - CLI test: `lean_deg=10, aspect=720/1008` gives `trunk_lean_deg` within 10 ± 1. The static-pose CLI test asserts 0.0.
+  - `test_metrics.py`: an upright trunk gives 0. A frame of all NaN gives NaN. Mirroring a 10° fixture (x → 1 − x) still gives +10, because the facing sign flips. The same normalized landmarks with aspect 1.0 and with aspect 0.5 give different angles.
+  - `test_video_pose.py`: the pose test asserts `landmarks.aspect == 1.0` for the 64×64 video.
+- Out of scope: per-stride lean, smoothing, and any other metric.
 
 ### T4 — Knee flexion at foot strike
 - Goal: the report gains `knee_flexion_at_strike_deg` with `mean` and `std`.
