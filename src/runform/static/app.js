@@ -173,7 +173,8 @@ function drawBackdrop() {
 }
 function updateCamera(frame, dt, now, snap = false) {
   const intro = ["title", "seeking", "joints", "bones", "reveal"].includes(phase);
-  const id = intro ? "intro" : scene?.id;
+  const nextScene = scenes[scenes.indexOf(scene) + 1];
+  const id = intro ? "intro" : scene && sceneElapsed > sceneDuration() - 600 ? nextScene?.id : scene?.id;
   const regions = {intro: [0,11,12,23,24], "trunk-lean": [0,11,12,23,24],
     cadence: [27,28,29,30,31,32], knee: [23,24,25,26,27,28,29,30,31,32], bounce: [11,12,23,24]};
   if (!regions[id]) {
@@ -203,6 +204,10 @@ function updateCamera(frame, dt, now, snap = false) {
       }
     }
   }
+  if (scene?.id === "knee" && !reducedMotion.matches) {
+    cameraTarget.scale *= 1 + .08 * (1 - ease(clamp((now - flashStart) / 600)));
+    limitCamera(cameraTarget);
+  }
   const alpha = snap || reducedMotion.matches ? 1 : 1 - Math.exp(-dt / 350);
   for (const key of Object.keys(camera)) camera[key] += (cameraTarget[key] - camera[key]) * alpha;
   limitCamera(camera);
@@ -217,22 +222,25 @@ let freezeUntil = 0;
 let userPaused = false;
 let previousFrame = -1;
 const frozenStrikes = new Set();
-const sceneCard = document.querySelector("#scene-card");
-const stepCounter = document.querySelector("#step-counter");
-const progressFill = document.querySelector("#scene-progress-fill");
+const lowerThird = document.querySelector("#lower-third");
+let flashStart = -Infinity;
+let leanEMA = null;
+let drawDelta = 0;
+const ease = t => 1 - (1 - t) ** 3;
+const sceneDuration = () => scene?.id === "summary" ? 7000 : 9000;
 const sceneChips = document.querySelector("#scene-chips");
 const metricValue = (value, unit) => value == null ? "—" : `${value.toFixed(1)}${unit}`;
 const scenes = [
   {
     id: "cadence", title: "Cadence",
     value: report => metricValue(report.cadence_spm, " spm"),
-    caption: "Every time a heel hits its lowest point, that's a foot strike. The median time between strikes of the same foot gives your cadence.",
+    caption: "Each heel strike is a step — this is your rhythm.",
     draw: drawCadence
   },
   {
     id: "trunk-lean", title: "Trunk lean", accent: "#f59e0b",
     value: report => metricValue(report.trunk_lean_deg, "°"),
-    caption: "The angle between your hip-to-shoulder line and vertical, averaged over every frame.",
+    caption: "How far your torso tips forward from vertical.",
     draw: drawTrunkLean
   },
   {
@@ -241,19 +249,19 @@ const scenes = [
       const knee = report.knee_flexion_at_strike_deg;
       return knee == null ? "—" : `${metricValue(knee.mean, "")} ± ${metricValue(knee.std, "°")}`;
     },
-    caption: "At each foot strike we freeze the frame and measure the hip–knee–ankle angle of the landing leg. 180° would be a straight leg.",
+    caption: "Your knee angle the instant your foot lands. 180° is a straight leg.",
     draw: drawKnee
   },
   {
     id: "bounce", title: "Vertical oscillation", chip: "Bounce", accent: "#34d399",
     value: report => metricValue(report.vertical_oscillation_rel == null ? null : report.vertical_oscillation_rel * 100, "%"),
-    caption: "We follow your hip midpoint through each stride. The gap between its highest and lowest point, divided by your shoulder-to-ankle height, is your vertical oscillation.",
+    caption: "How much your hips rise and fall with every stride.",
     draw: drawBounce
   },
   {
     id: "summary", title: "Your stride", chip: "Summary",
     value: () => "",
-    caption: "That's your stride. Scroll down for the full breakdown.",
+    caption: "That's your stride.",
     draw: () => {}
   }
 ];
@@ -268,247 +276,19 @@ scenes.forEach(item => {
   sceneChips.append(chip);
 });
 
-const chartPanel = document.querySelector("#chart-panel");
-const chartCanvas = document.querySelector("#measurement-chart");
-const chartCtx = chartCanvas.getContext("2d");
-let chartHover = null;
-let chartData = null;
-const currentBeat = () => !scene ? null : scene.id === "summary" || sceneElapsed >= 4000 ? "video" : "chart";
-const chartProgress = document.querySelector("#chart-progress");
-let displayedBeat = null;
-let touchStart = null;
-
-function plotBounds() {
-  const small = stageWidth < 540;
-  return {left: small ? 46 : 56, right: stageWidth - (small ? 12 : 24),
-    top: (small ? 100 : 76) + (chartData?.id === "bounce" ? 24 : 0), bottom: stageHeight - 40};
-}
-function resetChartHover() {
-  chartHover = null;
-  touchStart = null;
-}
-function updateChartHover(event, touch = false) {
-  resetChartHover();
-  if (currentBeat() !== "chart") return;
-  const rect = chartCanvas.getBoundingClientRect();
-  const x = event.clientX - rect.left, y = event.clientY - rect.top;
-  const bounds = plotBounds();
-  if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) return;
-  chartHover = {x, y, expiresAt: touch ? performance.now() + 2000 : null};
-}
-for (const type of ["pointerenter", "pointermove"]) {
-  chartPanel.addEventListener(type, event => {
-    if (event.pointerType !== "touch") updateChartHover(event);
+function updateLowerThird() {
+  if (!scene) return;
+  const age = sceneElapsed - 400;
+  const entrance = ease(clamp(age / 400));
+  lowerThird.style.opacity = String(entrance * clamp((sceneDuration() - sceneElapsed) / 500));
+  lowerThird.style.transform = `translateY(${12 * (1 - entrance)}px)`;
+  const count = reducedMotion.matches ? 1 : ease(clamp(age / 900));
+  const animatedValue = item => item.value(measurement.report).replace(/-?\d+(?:\.\d+)?/g,
+    value => (Number(value) * count).toFixed(1));
+  document.querySelector("#scene-value").textContent = animatedValue(scene);
+  document.querySelectorAll("#scene-summary strong").forEach((node, i) => {
+    node.textContent = animatedValue(scenes[i]);
   });
-}
-chartPanel.addEventListener("pointerleave", event => {
-  if (event.pointerType !== "touch") resetChartHover();
-});
-chartPanel.addEventListener("pointerdown", event => {
-  if (event.pointerType === "touch") {
-    resetChartHover();
-    touchStart = {x: event.clientX, y: event.clientY};
-  }
-});
-chartPanel.addEventListener("pointerup", event => {
-  if (event.pointerType !== "touch") return;
-  const tap = touchStart && Math.hypot(event.clientX - touchStart.x, event.clientY - touchStart.y) < 12;
-  if (tap) updateChartHover(event, true);
-  else resetChartHover();
-});
-chartPanel.addEventListener("pointercancel", resetChartHover);
-
-function syncBeat() {
-  const beat = currentBeat();
-  if (displayedBeat !== beat) resetChartHover();
-  displayedBeat = beat;
-  sceneCard.classList.toggle("chart-beat", beat === "chart");
-  sceneCard.setAttribute("aria-hidden", String(!scene || beat === "chart"));
-}
-
-function buildChart(id) {
-  const report = measurement.report, series = measurement.series;
-  const points = [];
-  const add = (frame, value, foot = null) => points.push({
-    t: frame / pose.fps, value, color: foot ? (foot === "left" ? "#0e9fbf" : "#8b5cf6") :
-      id === "bounce" ? "#34d399" : "#f59e0b"
-  });
-  let title, unit, reference = null, referenceLabel = "", band = null;
-  if (id === "cadence") {
-    title = "Step rate, stride by stride"; unit = "steps per minute";
-    for (const foot of ["left", "right"]) {
-      const strikes = measurement.strikes.filter(s => s.foot === foot).sort((a, b) => a.frame - b.frame);
-      strikes.slice(1).forEach((s, i) => {
-        if (s.frame > strikes[i].frame) add(s.frame, 120 * pose.fps / (s.frame - strikes[i].frame), foot);
-      });
-    }
-    reference = report.cadence_spm;
-    referenceLabel = `median ${reference} spm`;
-  } else if (id === "trunk-lean") {
-    title = "Trunk lean over time"; unit = "degrees";
-    series.trunk_lean_deg.forEach((v, i) => add(i, v));
-    reference = report.trunk_lean_deg;
-    referenceLabel = `average ${reference}°`;
-  } else if (id === "knee") {
-    title = "Knee angle at each foot strike"; unit = "degrees";
-    measurement.strikes.forEach((s, i) => add(s.frame, series.knee_at_strike_deg[i], s.foot));
-    reference = report.knee_flexion_at_strike_deg?.mean;
-    const std = report.knee_flexion_at_strike_deg?.std;
-    if (reference != null && std != null) band = [reference - std, reference + std];
-    referenceLabel = `${reference}° average`;
-  } else {
-    title = "Hip height through each stride"; unit = "% of body height";
-    series.hip_height_rel.forEach((v, i) => add(i, v == null ? null : v * 100));
-    referenceLabel = report.vertical_oscillation_rel == null ? "" :
-      `average bounce ${(report.vertical_oscillation_rel * 100).toFixed(1)}% of body height`;
-  }
-  points.sort((a, b) => a.t - b.t);
-  const clipDuration = Math.max(1 / pose.fps, (pose.frames.length - 1) / pose.fps);
-  const duration = id === "bounce" ? Math.min(6, clipDuration) : clipDuration;
-  const start = id === "bounce" ?
-    Math.max(0, Math.min(Math.floor(Math.floor(video.currentTime * pose.fps) / pose.fps), clipDuration - duration)) : 0;
-  const visiblePoints = points.filter(p => p.t >= start && p.t <= start + duration);
-  const values = visiblePoints.filter(p => p.value != null && Number.isFinite(p.value)).map(p => p.value);
-  if (reference != null) values.push(reference);
-  if (band) values.push(...band);
-  let min = values.length ? values.reduce((a, b) => Math.min(a, b)) : 0;
-  let max = values.length ? values.reduce((a, b) => Math.max(a, b)) : 1;
-  const padding = Math.max((max - min) * .1, id === "cadence" ? 10 : id === "bounce" ? .5 : 1);
-  min -= padding; max += padding;
-  // Round the domain outwards to a readable 1/2/5 tick interval.
-  const raw = (max - min) / 3, power = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].find(n => n * power >= raw) * power;
-  min = Math.floor(min / step) * step;
-  max = Math.ceil(max / step) * step;
-  return {id, title, unit, points, visiblePoints, start, duration, min, max, step, reference, referenceLabel, band,
-    dual: id === "cadence" || id === "knee"};
-}
-
-function drawChart() {
-  if (!chartData || !stageWidth || !stageHeight) return;
-  const c = chartCtx, d = chartData, w = stageWidth, h = stageHeight;
-  const small = w < 540;
-  const {left, right, top, bottom} = plotBounds();
-  const x = time => left + (time - d.start) / d.duration * (right - left);
-  const y = value => bottom - (value - d.min) / (d.max - d.min) * (bottom - top);
-  const reveal = reducedMotion.matches ? 1 : clamp(sceneElapsed / 2000);
-  const fade = reducedMotion.matches ? 1 : clamp((sceneElapsed - 2000) / 400);
-  c.clearRect(0, 0, w, h);
-  c.textBaseline = "alphabetic"; c.textAlign = "left";
-  const valueRight = right - (d.dual && !small ? 156 : 0);
-  const value = scene.value(measurement.report);
-  c.fillStyle = "#e6edf3"; c.font = "22px monospace"; c.textAlign = "right";
-  c.fillText(value, valueRight, 28);
-  const titleWidth = Math.max(12, valueRight - c.measureText(value).width - 32);
-  c.font = "600 15px sans-serif"; c.textAlign = "left";
-  let title = d.title;
-  while (title.length && c.measureText(title).width > titleWidth) title = title.slice(0, -1);
-  if (title !== d.title) {
-    while (title.length && c.measureText(title + "…").width > titleWidth) title = title.slice(0, -1);
-    title += "…";
-  }
-  c.fillText(title, 16, 26);
-  c.font = "12px sans-serif"; c.fillStyle = "#8b98a5";
-  c.fillText(d.unit, left, top - 12);
-  if (d.dual) {
-    const legendY = small ? 50 : 26;
-    ["Left", "Right"].forEach((name, i) => {
-      const lx = right - 132 + i * 70;
-      c.fillStyle = i ? "#8b5cf6" : "#0e9fbf"; c.fillRect(lx, legendY - 8, 14, 3);
-      c.fillStyle = "#e6edf3"; c.fillText(name, lx + 20, legendY);
-    });
-  }
-  c.strokeStyle = "#1f2933"; c.lineWidth = 1;
-  const tickStride = Math.max(1, Math.ceil((d.max - d.min) / d.step / (small ? 3 : 4)));
-  for (let v = d.min; v <= d.max + d.step / 100; v += d.step * tickStride) {
-    c.beginPath(); c.moveTo(left, y(v)); c.lineTo(right, y(v)); c.stroke();
-    c.fillStyle = "#8b98a5"; c.textAlign = "right";
-    c.fillText(String(Number(v.toFixed(2))), left - 8, y(v) + 4);
-  }
-  c.textAlign = "center";
-  const ticks = small ? 3 : 4;
-  for (let i = 0; i <= ticks; i++) {
-    const time = d.start + d.duration * i / ticks;
-    c.fillText(time.toFixed(1), x(time), bottom + 18);
-  }
-  c.fillText("Time (s)", (left + right) / 2, h - 5);
-  const textPill = (text, px, py, align = "right", ink = "#8b98a5") => {
-    c.font = "12px sans-serif";
-    const width = c.measureText(text).width + 12;
-    const tx = Math.max(4, Math.min(w - width - 4, align === "right" ? px - width : px));
-    const ty = Math.max(4, Math.min(h - 26, py));
-    c.fillStyle = "#0b0f14"; c.beginPath(); c.roundRect(tx, ty, width, 24, 5); c.fill();
-    c.fillStyle = ink; c.textAlign = "left"; c.fillText(text, tx + 6, ty + 16);
-  };
-  c.save();
-  c.beginPath(); c.rect(left, top, (right - left) * reveal, bottom - top); c.clip();
-  if (d.band) {
-    c.fillStyle = "rgba(230,237,243,.08)";
-    c.fillRect(left, y(d.band[1]), right - left, y(d.band[0]) - y(d.band[1]));
-  }
-  const dot = (px, py, color) => {
-    c.beginPath(); c.arc(px, py, 4, 0, Math.PI * 2);
-    c.fillStyle = color; c.fill(); c.strokeStyle = "#0b0f14"; c.lineWidth = 2; c.stroke();
-  };
-  if (!d.dual) {
-    c.strokeStyle = d.id === "bounce" ? "#34d399" : "#f59e0b"; c.lineWidth = 2;
-    c.beginPath();
-    let connected = false;
-    d.visiblePoints.forEach(p => {
-      if (p.value == null || !Number.isFinite(p.value)) { connected = false; return; }
-      if (connected) c.lineTo(x(p.t), y(p.value)); else c.moveTo(x(p.t), y(p.value));
-      connected = true;
-    });
-    c.stroke();
-  } else d.visiblePoints.forEach(p => { if (p.value != null) dot(x(p.t), y(p.value), p.color); });
-  if (d.id === "bounce") {
-    const strides = measurement.strides;
-    let previousLabelRight = -Infinity;
-    const inWindow = p => p && p.t >= d.start && p.t <= d.start + d.duration;
-    strides.filter(s => s.foot === strides[0]?.foot)
-      .sort((a, b) => a.top - b.top).forEach(s => {
-        const a = d.points[s.top], b = d.points[s.bottom];
-        if (a?.value == null || b?.value == null || !(inWindow(a) || inWindow(b))) return;
-        const px = x(a.t), ya = y(a.value), yb = y(b.value);
-        c.strokeStyle = "#8b98a5"; c.lineWidth = 1;
-        c.beginPath(); c.moveTo(px, ya); c.lineTo(px, yb); c.stroke();
-        if (inWindow(a)) dot(px, ya, "#34d399");
-        if (inWindow(b)) dot(x(b.t), yb, "#34d399");
-        if (!inWindow(a)) return;
-        const text = `${(s.value * 100).toFixed(1)}%`;
-        c.font = "12px sans-serif";
-        const width = c.measureText(text).width + 12;
-        const labelLeft = Math.max(left, Math.min(right - width, px - width / 2));
-        // Skip labels that collide with the preceding visible stride label.
-        const labelTop = Math.max(top + 2, ya - 27);
-        if (labelLeft <= previousLabelRight + 6 || labelLeft + width > left + (right - left) * reveal) return;
-        textPill(text, labelLeft, labelTop, "left", "#e6edf3");
-        previousLabelRight = labelLeft + width;
-      });
-  }
-  c.restore();
-  c.globalAlpha = fade;
-  if (d.reference != null) {
-    c.strokeStyle = "#8b98a5"; c.lineWidth = 1.5; c.setLineDash([6, 5]);
-    c.beginPath(); c.moveTo(left, y(d.reference)); c.lineTo(right, y(d.reference)); c.stroke();
-    c.setLineDash([]);
-    textPill(d.referenceLabel, right, y(d.reference) - 27);
-  } else if (d.referenceLabel) textPill(d.referenceLabel, right, top - 44);
-  c.globalAlpha = 1;
-  if (!d.visiblePoints.some(p => p.value != null)) {
-    c.fillStyle = "#e6edf3"; c.textAlign = "center";
-    c.fillText("No measurement data available", (left + right) / 2, (top + bottom) / 2);
-  }
-  if (chartHover && currentBeat() === "chart") {
-    const candidates = d.visiblePoints.filter(p => p.value != null && x(p.t) <= left + (right - left) * reveal);
-    const nearest = candidates.reduce((a, b) => !a || Math.abs(x(b.t) - chartHover.x) < Math.abs(x(a.t) - chartHover.x) ? b : a, null);
-    if (nearest) {
-      c.strokeStyle = "#8b98a5"; c.lineWidth = 1;
-      c.beginPath(); c.moveTo(x(nearest.t), top); c.lineTo(x(nearest.t), bottom); c.stroke();
-      textPill(`${nearest.t.toFixed(2)} s · ${nearest.value.toFixed(1)} ${d.unit}`,
-        x(nearest.t) + 8, chartHover.y - 30, "left", "#e6edf3");
-    }
-  }
 }
 
 function startScene(next) {
@@ -520,24 +300,16 @@ function startScene(next) {
   frozenStrikes.clear();
   scene = next;
   sceneElapsed = 0;
-  resetChartHover();
-  syncBeat();
-  chartProgress.style.width = "0%";
-  chartPanel.style.setProperty("--scene-accent", scene?.accent || "#22d3ee");
-  chartData = scene && scene.id !== "summary" ? buildChart(scene.id) : null;
-  chartCanvas.setAttribute("aria-label", chartData ? `${chartData.title}: ${scene.value(measurement.report)}` : "Measurement over time");
-  chartPanel.hidden = !chartData;
-  chartPanel.style.opacity = "1";
-  chartPanel.style.pointerEvents = chartData ? "auto" : "none";
-  sceneCard.hidden = !scene;
-  document.querySelector("#video-stage").classList.toggle("has-scene", !!scene);
+  flashStart = -Infinity;
+  leanEMA = null;
+  lowerThird.hidden = !scene;
+  lowerThird.style.opacity = "0";
+  stage.classList.toggle("has-scene", !!scene);
   label.hidden = !!scene;
-  stepCounter.hidden = scene?.id !== "cadence";
-  progressFill.style.width = "0%";
   sceneChips.querySelectorAll("button").forEach(chip => {
     chip.setAttribute("aria-pressed", String(chip.dataset.scene === scene?.id));
   });
-  sceneCard.style.setProperty("--scene-accent", scene?.accent || "#22d3ee");
+  lowerThird.style.setProperty("--scene-accent", scene?.accent || "#22d3ee");
   const summary = document.querySelector("#scene-summary");
   summary.replaceChildren();
   summary.hidden = scene?.id !== "summary";
@@ -554,7 +326,7 @@ function startScene(next) {
     });
   }
   if (scene) {
-    document.querySelector("#scene-title").textContent = scene.title;
+    document.querySelector("#scene-title").textContent = `0${scenes.indexOf(scene) + 1} · ${scene.id === "bounce" ? "Bounce" : scene.id === "summary" ? "Summary" : scene.title}`;
     document.querySelector("#scene-value").textContent = scene.value(measurement.report);
     document.querySelector("#scene-caption").textContent = scene.caption;
     setSpeed(0.5);
@@ -563,30 +335,44 @@ function startScene(next) {
 
 function drawCadence(ctx, frame, index) {
   const strikes = measurement.strikes;
-  stepCounter.textContent = `Steps: ${strikes.filter(strike => strike.frame <= index).length}`;
+  const alpha = ctx.globalAlpha;
   strikes.forEach(strike => {
     const age = index - strike.frame;
     const heel = frame?.[strike.foot === "left" ? 29 : 30];
     if (age < 0 || age > 12 || !heel) return;
-    ctx.globalAlpha = 1 - age / 13;
+    ctx.globalAlpha = alpha * (1 - age / 13);
     ctx.strokeStyle = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(...project(heel), 7 + age * 2, 0, Math.PI * 2);
     ctx.stroke();
   });
-  ctx.globalAlpha = 1;
-  const left = 12, width = Math.max(1, stageWidth - 24), top = stageHeight * .94 - 44;
-  const position = index => left + width * index / Math.max(1, pose.frames.length - 1);
-  ctx.fillStyle = "#0b1725dd";
-  ctx.fillRect(left - 4, top - 6, width + 8, 40);
+  ctx.globalAlpha = alpha;
+  const feet = [27,28,29,30,31,32].map(i => frame?.[i]).filter(Boolean).map(project);
+  if (!feet.length) return;
+  const width = stageWidth * .6;
+  const center = feet.reduce((sum, p) => sum + p[0], 0) / feet.length;
+  const left = Math.max(8, Math.min(stageWidth - width - 8, center - width / 2));
+  const top = Math.max(stageHeight * .08, Math.min(stageHeight * .6 - 44, Math.max(...feet.map(p => p[1])) + 18));
+  ctx.fillStyle = "rgba(11,23,37,.7)";
+  ctx.beginPath(); ctx.roundRect(left, top, width, 44, 8); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.rect(left, top, width, 44); ctx.clip();
   strikes.forEach(strike => {
-    ctx.strokeStyle = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
-    const y = top + (strike.foot === "left" ? 0 : 16);
-    ctx.beginPath(); ctx.moveTo(position(strike.frame), y); ctx.lineTo(position(strike.frame), y + 10); ctx.stroke();
+    const distance = strike.frame - index;
+    if (Math.abs(distance) > 2 * pose.fps) return;
+    const x = left + width / 2 + distance * width / (4 * pose.fps);
+    ctx.globalAlpha = alpha * (Math.abs(distance) <= 3 ? 1 : .45);
+    ctx.strokeStyle = ctx.shadowColor = strike.foot === "left" ? "#22d3ee" : "#a78bfa";
+    ctx.shadowBlur = Math.abs(distance) <= 3 ? 12 : 0;
+    const y = top + (strike.foot === "left" ? 6 : 27);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 10); ctx.stroke();
   });
-  ctx.strokeStyle = "#ffffff";
-  ctx.beginPath(); ctx.moveTo(position(index), top - 4); ctx.lineTo(position(index), top + 30); ctx.stroke();
+  ctx.restore(); ctx.globalAlpha = alpha; ctx.shadowBlur = 0;
+  ctx.strokeStyle = "white"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(left + width / 2, top + 3); ctx.lineTo(left + width / 2, top + 41); ctx.stroke();
+  ctx.font = "11px monospace"; ctx.fillStyle = "#e6edf3";
+  ctx.fillText(`steps ${strikes.filter(strike => strike.frame <= index).length}`, left + 6, top - 5);
+
 }
 
 function drawTrunkLean(ctx, frame, index) {
@@ -614,21 +400,33 @@ function drawTrunkLean(ctx, frame, index) {
   ctx.fill();
   ctx.beginPath(); ctx.arc(...hip, radius, -Math.PI / 2, end, dx < 0); ctx.stroke();
   const value = measurement.series.trunk_lean_deg[index];
-  if (value != null) {
-    const text = `${value.toFixed(1)}°`;
-    ctx.font = "bold 15px monospace";
-    ctx.textBaseline = "top";
-    const padding = 6;
-    const width = ctx.measureText(text).width + padding * 2;
-    const x = dx >= 0 ? hip[0] - 14 - width : hip[0] + 14;
-    const y = hip[1] - length + 20;
-    ctx.fillStyle = "rgba(11, 23, 37, 0.85)";
-    ctx.beginPath();
-    ctx.roundRect(x, y, width, 15 + padding * 2, 6);
-    ctx.fill();
-    ctx.fillStyle = "#f59e0b";
-    ctx.fillText(text, x + padding, y + padding);
+  if (value != null) leanEMA = leanEMA == null ? value : leanEMA + (value - leanEMA) * (1 - Math.exp(-drawDelta / 150));
+  const x = Math.max(58, Math.min(stageWidth - 58, shoulder[0] + facing(frame) * 70));
+  const y = Math.max(76, Math.min(stageHeight * .6 - 30, shoulder[1] - 30));
+  ctx.fillStyle = "rgba(11,23,37,.7)";
+  ctx.beginPath(); ctx.arc(x, y, 55, 0, Math.PI * 2); ctx.fill();
+  const angle = v => Math.PI + clamp(v / 20) * Math.PI;
+  ctx.font = "10px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let v = 0; v <= 20; v += 5) {
+    const a = angle(v);
+    ctx.strokeStyle = "#c9d4df"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 38 * Math.cos(a), y + 38 * Math.sin(a));
+    ctx.lineTo(x + 44 * Math.cos(a), y + 44 * Math.sin(a)); ctx.stroke();
+    if (v % 10 === 0) { ctx.fillStyle = "#c9d4df"; ctx.fillText(String(v), x + 30 * Math.cos(a), y + 30 * Math.sin(a)); }
   }
+  const reference = measurement.report.trunk_lean_deg;
+  if (reference != null) {
+    const a = angle(reference); ctx.strokeStyle = "white"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(x + 43 * Math.cos(a), y + 43 * Math.sin(a));
+    ctx.lineTo(x + 49 * Math.cos(a), y + 49 * Math.sin(a)); ctx.stroke();
+  }
+  if (leanEMA != null) {
+    const a = angle(leanEMA); ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x + 36 * Math.cos(a), y + 36 * Math.sin(a)); ctx.stroke();
+    ctx.fillStyle = "#e6edf3"; ctx.font = "14px monospace"; ctx.fillText(`${leanEMA.toFixed(1)}°`, x, y + 18);
+  }
+  ctx.textAlign = "left";
+
 }
 
 function pill(ctx, text, x, y, accent) {
@@ -643,14 +441,21 @@ function pill(ctx, text, x, y, accent) {
   ctx.fillText(text, x + 6, y + 6);
 }
 
+function facing(frame) {
+  const differences = [[31,29],[32,30]].filter(([a,b]) => frame?.[a] && frame[b])
+    .map(([a,b]) => frame[a][0] - frame[b][0]).sort((a,b) => a-b);
+  return Math.sign(differences.reduce((a,b) => a+b, 0)) || 1;
+}
+
 function drawKnee(ctx, frame, index) {
+  const alpha = ctx.globalAlpha;
   measurement.strikes.forEach((strike, i) => {
     const age = index - strike.frame;
     if (age < 0 || age > 15) return;
     const ids = strike.foot === "left" ? [23,25,27] : [24,26,28];
     if (!frame || !ids.every(id => frame[id])) return;
     const [hip, knee, ankle] = ids.map(id => project(frame[id]));
-    ctx.globalAlpha = 1 - age / 16;
+    ctx.globalAlpha = alpha * (1 - age / 16);
     ctx.strokeStyle = "#f472b6";
     ctx.lineWidth = 5;
     ctx.beginPath(); ctx.moveTo(...hip); ctx.lineTo(...knee); ctx.lineTo(...ankle); ctx.stroke();
@@ -663,6 +468,21 @@ function drawKnee(ctx, frame, index) {
     const value = measurement.series.knee_at_strike_deg[i];
     if (value != null) pill(ctx, `${Math.round(value)}°`, knee[0] + 34, knee[1] - 14, "#f472b6");
   });
+  ctx.globalAlpha = alpha;
+  const history = measurement.strikes.map((strike, i) => ({...strike, value: measurement.series.knee_at_strike_deg[i]}))
+    .filter(s => s.frame <= index && s.value != null).slice(-5).reverse();
+  const kneeId = history[0]?.foot === "left" ? 25 : 26;
+  if (frame?.[kneeId]) {
+    const knee = project(frame[kneeId]);
+    const x = Math.max(12, Math.min(stageWidth - 85, knee[0] - facing(frame) * 60));
+    const y = Math.max(24, Math.min(stageHeight * .6 - 90, knee[1]));
+    history.forEach((strike, i) => {
+      ctx.globalAlpha = alpha * (1 - i * .18);
+      ctx.font = `${i ? 13 : 15}px monospace`; ctx.fillStyle = i ? "#c9d4df" : "#f472b6";
+      ctx.fillText(`${strike.value.toFixed(1)}°`, x, y + i * 19);
+    });
+  }
+
 }
 
 function hipPoint(index) {
@@ -675,45 +495,56 @@ function hipPoint(index) {
 function drawBounce(ctx, frame, index) {
   const hip = hipPoint(index);
   if (!hip) return;
+  const alpha = ctx.globalAlpha;
+  const windowFrames = Math.max(1, Math.round(3 * pose.fps));
+  const start = Math.max(0, index - windowFrames);
+  const x = i => hip[0] - (index - i) * stageWidth * .5 / windowFrames;
   ctx.strokeStyle = ctx.shadowColor = "#34d399";
-  ctx.shadowBlur = 12;
-  ctx.lineWidth = 3;
+  ctx.shadowBlur = 12; ctx.lineWidth = 2.5;
   let previous = null;
-  for (let i = Math.max(0, index - 59); i <= index; i++) {
+  for (let i = start; i <= index; i++) {
     const point = hipPoint(i);
     if (!point) { previous = null; continue; }
-    const x = hip[0] - (index - i) * 4;
-    ctx.globalAlpha = 1 - (index - i) / 60;
-    if (previous) {
-      ctx.beginPath(); ctx.moveTo(...previous); ctx.lineTo(x, point[1]); ctx.stroke();
-    }
-    previous = [x, point[1]];
+    ctx.globalAlpha = alpha * (1 - .85 * (index - i) / windowFrames);
+    if (previous) { ctx.beginPath(); ctx.moveTo(...previous); ctx.lineTo(x(i), point[1]); ctx.stroke(); }
+    previous = [x(i), point[1]];
   }
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 0;
-  const strides = measurement.strides;
-  const stride = strides.find(s => s.foot === strides[0].foot && s.start <= index && index <= s.end);
-  if (!stride) return;
-  const top = hipPoint(stride.top), bottom = hipPoint(stride.bottom);
-  if (!top || !bottom) return;
-  const left = hip[0] - pictureWidth * .22, right = hip[0] + pictureWidth * .22;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6,5]);
-  [top[1], bottom[1]].forEach(y => {
-    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+  ctx.globalAlpha = alpha; ctx.shadowBlur = 0;
+  const strides = measurement.strides.filter(s => s.foot === measurement.strides[0]?.foot);
+  const current = strides.find(s => s.start <= index && index <= s.end);
+  if (current) {
+    ctx.strokeStyle = "rgba(52,211,153,.35)"; ctx.lineWidth = 1; ctx.setLineDash([6,5]);
+    [current.top, current.bottom].forEach(i => {
+      const point = hipPoint(i); if (!point) return;
+      ctx.beginPath(); ctx.moveTo(x(index - windowFrames), point[1]); ctx.lineTo(hip[0], point[1]); ctx.stroke();
+    });
+    ctx.setLineDash([]);
+  }
+  let labelRight = -Infinity;
+  strides.filter(s => s.top >= start && s.top <= index).sort((a,b) => a.top-b.top).forEach(s => {
+    const top = hipPoint(s.top), bottom = hipPoint(s.bottom);
+    if (!top || !bottom) return;
+    const px = x(s.top);
+    ctx.strokeStyle = "rgba(201,212,223,.6)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, bottom[1]); ctx.lineTo(px, top[1]); ctx.stroke();
+    const text = `${(s.value * 100).toFixed(1)}%`;
+    ctx.font = "12px monospace"; ctx.textBaseline = "top";
+    const width = ctx.measureText(text).width + 12;
+    const left = px - width / 2;
+    if (left < 0 || left + width > stageWidth || left <= labelRight + 6) return;
+    const y = Math.max(8, top[1] - 26);
+    ctx.fillStyle = "rgba(11,23,37,.85)";
+    ctx.beginPath(); ctx.roundRect(left, y, width, 22, 5); ctx.fill();
+    ctx.fillStyle = "#e6edf3"; ctx.fillText(text, left + 6, y + 5);
+    labelRight = left + width;
   });
-  ctx.setLineDash([]);
-  const x = right + 12;
-  ctx.beginPath(); ctx.moveTo(x - 5, top[1]); ctx.lineTo(x + 5, top[1]);
-  ctx.moveTo(x, top[1]); ctx.lineTo(x, bottom[1]);
-  ctx.moveTo(x - 5, bottom[1]); ctx.lineTo(x + 5, bottom[1]); ctx.stroke();
-  pill(ctx, `${(stride.value * 100).toFixed(1)}% of body height`, x + 10, bottom[1] + 10, "#34d399");
+  ctx.fillStyle = ctx.shadowColor = "#34d399"; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.arc(...hip, 5, 0, Math.PI * 2); ctx.fill();
 }
 
 window.__runform = Object.freeze({
   get phase() { return phase; },
   get scene() { return scene?.id ?? null; },
-  get beat() { return currentBeat(); },
   get frameIndex() { return frameIndex; },
   get camera() { return {...camera}; }
 });
@@ -769,9 +600,6 @@ function resizeCanvas() {
   canvas.width = Math.round(stageWidth * ratio);
   canvas.height = Math.round(stageHeight * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  chartCanvas.width = Math.round(stageWidth * ratio);
-  chartCanvas.height = Math.round(stageHeight * ratio);
-  chartCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   // Ambient fill needs no high-DPI detail beneath its blur.
   backdrop.width = Math.max(1, Math.round(stageWidth / 2));
   backdrop.height = Math.max(1, Math.round(stageHeight / 2));
@@ -848,8 +676,12 @@ function startStage(file, data) {
 }
 
 function color(index) { return index % 2 ? "#22d3ee" : "#a78bfa"; }
+function overlayAlpha() {
+  return scene ? ease(clamp(sceneElapsed / 700)) * ease(clamp((sceneDuration() - sceneElapsed) / 600)) : 0;
+}
+
 function draw(frame, jointProgress, boneProgress) {
-  ctx.globalAlpha = opacity * (scene && scene.id !== "summary" ? .4 : 1);
+  ctx.globalAlpha = opacity * (scene && scene.id !== "summary" ? 1 - .6 * overlayAlpha() : 1);
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.shadowBlur = 12;
@@ -881,29 +713,12 @@ function draw(frame, jointProgress, boneProgress) {
 function tick(now) {
   const wallDelta = Math.max(0, now - lastTime);
   const delta = Math.min(100, wallDelta);
-  if (chartHover?.expiresAt != null && now >= chartHover.expiresAt) resetChartHover();
-  if (chartHover) {
-    const bounds = plotBounds();
-    if (chartHover.x < bounds.left || chartHover.x > bounds.right ||
-        chartHover.y < bounds.top || chartHover.y > bounds.bottom) resetChartHover();
-  }
-  if (scene && !userPaused && !(currentBeat() === "chart" && chartHover) &&
-      (freezeUntil || (!video.paused && !video.seeking))) {
+  drawDelta = wallDelta;
+  if (scene && !userPaused && (freezeUntil || (!video.paused && !video.seeking))) {
     sceneElapsed += wallDelta;
-    const duration = scene.id === "summary" ? 8000 : 11000;
-    if (sceneElapsed >= duration) startScene(scenes[scenes.indexOf(scene) + 1] || null);
-    progressFill.style.width = `${clamp(sceneElapsed / (scene?.id === "summary" ? 8000 : 11000)) * 100}%`;
+    if (sceneElapsed >= sceneDuration()) startScene(scenes[scenes.indexOf(scene) + 1] || null);
   }
-  syncBeat();
-  chartProgress.style.width = scene ? `${clamp(sceneElapsed / (scene.id === "summary" ? 8000 : 11000)) * 100}%` : "0%";
-  if (chartData) {
-    const fade = clamp((sceneElapsed - 4000) / 250);
-    chartPanel.hidden = fade >= 1;
-    chartPanel.style.opacity = String(1 - fade);
-    chartPanel.style.pointerEvents = currentBeat() === "chart" ? "auto" : "none";
-    if (currentBeat() !== "chart") resetChartHover();
-    if (!chartPanel.hidden) drawChart();
-  }
+  updateLowerThird();
   lastTime = now;
   label.style.visibility = phase === "title" ? "hidden" : "";
   if (phase === "title") {
@@ -936,7 +751,7 @@ function tick(now) {
     freezeUntil = 0;
     if (!userPaused) video.play().catch(() => {});
   }
-  if (scene?.id === "knee" && currentBeat() === "video" && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
+  if (scene?.id === "knee" && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
     // A natural loop starts a new pass; explicit seeks only move the cursor.
     if (frameIndex < previousFrame) frozenStrikes.clear();
     const strikeIndex = measurement.strikes.findIndex((strike, i) =>
@@ -945,6 +760,7 @@ function tick(now) {
       frozenStrikes.add(strikeIndex);
       frameIndex = measurement.strikes[strikeIndex].frame;
       freezeUntil = now + 1000;
+      flashStart = now;
       video.pause();
       video.currentTime = (frameIndex + .5) / pose.fps;
     }
@@ -961,8 +777,13 @@ function tick(now) {
     phase === "joints" ? 0 : phase === "bones" ? clamp(elapsed / 1400) : 1);
   if (scene) {
     ctx.save();
+    ctx.globalAlpha = overlayAlpha();
     scene.draw(ctx, frame, frameIndex);
     ctx.restore();
+  }
+  if (scene?.id === "knee" && !reducedMotion.matches) {
+    ctx.fillStyle = `rgba(255,255,255,${.22 * overlayAlpha() * (1 - clamp((now - flashStart) / 300))})`;
+    ctx.fillRect(0, 0, stageWidth, stageHeight);
   }
   animation = requestAnimationFrame(tick);
 }

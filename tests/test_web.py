@@ -13,8 +13,9 @@ def test_index_and_static():
     assert response.status_code == 200
     assert response.mimetype == "text/html"
     assert b'type="file"' in response.data
-    for element_id in ("title-card", "letterbox-top", "letterbox-bottom"):
+    for element_id in ("title-card", "letterbox-top", "letterbox-bottom", "lower-third"):
         assert f'id="{element_id}"'.encode() in response.data
+    assert b'id="chart-panel"' not in response.data
     assert client.get("/static/app.js").status_code == 200
 
 

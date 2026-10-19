@@ -223,7 +223,8 @@ src/runform/
 | W4 | Explainers: knee at strike + vertical oscillation; polish | done |
 | W5 | Cinematic camera: title card, zooms per scene | done |
 | W6 | Chart beats: each scene opens with its graph, then the zoomed video | done (superseded by W7) |
-| W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | todo |
+| W7 | Immersive single-shot tour: in-world HUDs, no chart breaks | done |
+| W8 | Speed ramps: slow-mo on key moments, fast transitions | todo |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).
