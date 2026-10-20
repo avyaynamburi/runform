@@ -563,6 +563,47 @@ src/runform/
     - no console errors
 - Out of scope: other "optimal" references, absolute units.
 
+### W12 — "How it works" tutorial with a demo clip
+- Goal: a "How it works" button on the landing page opens a short step-by-step tutorial that explains the app while a bundled demo clip is analyzed. It then drops the user into the real tour on that clip, with a few coach marks pointing out the controls. A first-time visitor sees the whole product without needing their own video.
+- Files: `src/runform/web.py`, `src/runform/cli.py`, `src/runform/static/index.html`, `src/runform/static/style.css`, `src/runform/static/app.js`, `tests/test_web.py`, `tests/test_cli.py`
+- Steps:
+  - **Demo clip:** `runform serve --demo PATH`. It defaults to `samples/demo_run.mp4` when that file exists (relative to cwd); otherwise there is no demo. `create_app(model=None, demo=None)` accepts a path or None.
+  - **web.py:**
+    - Extract the body of `/api/analyze` that builds the JSON from an `Analysis` into `_analysis_payload(analysis) -> dict`, used by both routes. The behavior of `/api/analyze` is unchanged.
+    - `GET /api/demo/status` → `{"available": bool, "ready": bool}`. `ready` means the cached result exists.
+    - `POST /api/demo` → the same payload as `/api/analyze` for the demo clip, plus `"demo": true`. The first call runs `pipeline.analyze(demo, model=model)` and caches the payload in the app (guard it with a `threading.Lock` so concurrent calls analyze once). Later calls return the cache. 404 `{"error": ...}` when there's no demo; 422 on `ValueError`, as in analyze.
+    - `GET /api/demo/video` → `send_file` of the clip (`conditional=True`), or 404.
+    - `app.warm_demo()`: a function attached to the app (`app.extensions["runform_warm_demo"]` or a plain attribute) that computes the cache. `cli serve` starts it in a daemon thread before `run` when a demo exists, so the result is usually ready by the time anyone clicks.
+  - **Landing page:** a secondary "How it works" button sits beside the drop zone (under the tip line): outlined, with a small ▶ glyph. It's always shown. If `available` is false, the tutorial still runs, but the last step says "No demo clip on this server — drop your own video to try it" and offers to close.
+  - **Tutorial modal** (`#tutorial`, a `<dialog>` with `showModal`, Esc closes, focus is trapped by the dialog):
+    - A dark card with a step counter ("1 / 4"), progress dots, Back / Next and a "Skip" link. Each step has a big mono numeral, a title, two lines of copy and a small inline-SVG illustration (simple line art in the accent color, animated with CSS; still under `prefers-reduced-motion`).
+    - Step 1, **Film from the side:** "Stand the phone sideways to your path, full body in frame, camera still. 10–20 seconds of steady running is plenty." Illustration: a phone outline and a stick runner passing.
+    - Step 2, **We track 33 body points:** "A pose model finds your joints in every frame, then smooths out the jitter." Illustration: dots connecting into a skeleton.
+    - Step 3, **We find every foot strike:** "Each landing is the heel's lowest point. From those we get cadence, your knee at landing, your bounce and overstride." Illustration: a heel-height wave with tick marks at the troughs.
+    - Step 4, **Watch it on a real run:** "Here's a demo clip, analyzed just now on this machine." It shows a status line: "Analyzing demo… " with a spinner, then "Ready" and a primary button "Start demo tour". The button is disabled until ready.
+    - On open: `POST /api/demo` starts immediately (no waiting until step 4) and `GET /api/demo/video` is fetched as a Blob in parallel. Both results are kept for the session, so reopening is instant. On failure, step 4 shows the error text and a "Close" button.
+  - **Demo tour:** "Start demo tour" closes the dialog, hides the upload section, then calls `renderResults(payload.report)` and `startStage(blob, payload)` (the existing path; `createObjectURL` accepts a Blob). A small "DEMO CLIP" pill shows in the results header and the stage's top-left while in demo mode; Reset clears it.
+  - **Coach marks** (demo mode only, once per demo start): after the intro finishes, show 3 sequential callouts anchored to real elements, each with "Next" (the last says "Got it") and a "Skip tips" link:
+    1. the scene chips: "Jump between measurements anytime."
+    2. the speed buttons: "Slow it down to see each landing."
+    3. the close button: "Close for the full breakdown with all the numbers."
+    - Rules: while a callout is showing, the control bar stays visible (no auto-hide) and the video keeps playing. Each callout is clamped inside the viewport with an arrow toward its target and positioned on resize. Esc dismisses the tips (and only the tips).
+  - **Style:** match the existing dark/cyan look, the mono eyebrows and the radius. The modal is a 560 px max width card and full-width on a phone (390 px), with no horizontal scroll.
+- Acceptance:
+  - `ruff check . && pytest -q`, `node --check src/runform/static/app.js`.
+  - `test_web.py`:
+    - the index has `id="how-it-works"` and `id="tutorial"`
+    - with `create_app(demo=tmp_clip)` and `pipeline.read_frames` / `extract_landmarks` monkeypatched to the fixture: status is `ready: false`, then POST returns `demo: true` with `report.cadence_spm` ≈ 170 and a 100-point `foot_path`, then status is `ready: true`, and a second POST doesn't call `extract_landmarks` again
+    - `GET /api/demo/video` returns the file's bytes
+    - with no demo: status `available: false`, POST 404, video 404
+  - `test_cli.py`: `main(["serve", "--demo", str(clip), "--port", "9"])`, with `create_app` and `Flask.run` monkeypatched, passes the demo path through and doesn't block. Without `--demo` and with no `samples/demo_run.mp4` in cwd (use `monkeypatch.chdir(tmp_path)`), demo is None.
+  - Lead checks in headless Chrome with `samples/demo_run.mp4`:
+    - the button opens the modal and all four steps render at 1280×900 and 390×844
+    - step 4 becomes ready and the tour starts on the demo clip with the DEMO pill
+    - the three coach marks appear in order, point at the right elements, and the bar stays visible during them
+    - no console errors
+- Out of scope: changes to the analysis, new metrics, persisting "seen the tutorial" (no storage), and bundling the clip into git.
+
 ## Later (not in MVP)
 - `web.py` recomputes the knee-at-strike angle per strike instead of sharing `metrics.knee_flexion_at_strikes` (which drops NaNs). Unify them with an option to keep NaNs.
 - Deduplicate the body-height computation in `gait.py` and `metrics.py`, and the `frames_with_pose` count in `cli.py` and `report.py`.
