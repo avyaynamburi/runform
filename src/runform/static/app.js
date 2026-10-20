@@ -8,8 +8,145 @@ const results = document.querySelector("#results");
 const error = document.querySelector("#error");
 let busy = false;
 
+let demoMode = false;
+let tipsPending = false;
+let tipIndex = -1;
+const tutorial = document.querySelector("#tutorial");
+const coach = document.querySelector("#coach-mark");
+const tutorialNext = document.querySelector("#tutorial-next");
+const demoStatus = document.querySelector("#demo-status");
+let tutorialStep = 0;
+let demoSession = null;
+let demoData = null;
+let demoBlob = null;
+let demoError = "";
+let demoAvailable = null;
+const tutorialSteps = [
+  ["Film from the side", "Stand the phone sideways to your path, full body in frame, camera still. 10–20 seconds of steady running is plenty.", '<rect x="24" y="8" width="42" height="74" rx="6"/><circle cx="151" cy="18" r="8"/><path d="m151 26-12 25 24 14m-24-14-21 25m27-36-23-6m29-8 19 17 20-8"/>'],
+  ["We track 33 body points", "A pose model finds your joints in every frame, then smooths out the jitter.", '<path d="m120 23-25 14 25 20 25-20-25-14v34m-25-20-18 21m68-21 18 21m-43-1-20 25m20-25 20 25"/><circle cx="120" cy="13" r="8"/><circle cx="95" cy="37" r="4"/><circle cx="145" cy="37" r="4"/><circle cx="120" cy="57" r="4"/><circle cx="100" cy="82" r="4"/><circle cx="140" cy="82" r="4"/>'],
+  ["We find every foot strike", "Each landing is the heel's lowest point. From those we get cadence, your knee at landing, your bounce and overstride.", '<path d="M10 15C22.5 15 22.5 60 35 60S47.5 15 60 15C72.5 15 72.5 60 85 60S97.5 15 110 15C122.5 15 122.5 60 135 60S147.5 15 160 15C172.5 15 172.5 60 185 60S197.5 15 210 15M35 68v14m50-14v14m50-14v14m50-14v14"/><g fill="#22d3ee"><circle cx="35" cy="60" r="3"/><circle cx="85" cy="60" r="3"/><circle cx="135" cy="60" r="3"/><circle cx="185" cy="60" r="3"/></g>'],
+  ["Watch it on a real run", "Here's a demo clip, analyzed just now on this machine.", '<rect x="60" y="5" width="120" height="80" rx="10"/><path d="m106 25 32 20-32 20Z"/>']
+];
+function renderTutorial() {
+  const [title, copy, art] = tutorialSteps[tutorialStep];
+  document.querySelector("#tutorial-counter").textContent = `${tutorialStep + 1} / 4`;
+  document.querySelector("#tutorial-number").textContent = `0${tutorialStep + 1}`;
+  document.querySelector("#tutorial-title").textContent = title;
+  document.querySelector("#tutorial-copy").textContent = copy;
+  document.querySelector("#tutorial-art").innerHTML = art;
+  document.querySelector("#tutorial-dots").replaceChildren(...tutorialSteps.map((_, i) => {
+    const dot = document.createElement("span");
+    dot.classList.toggle("active", i === tutorialStep);
+    return dot;
+  }));
+  document.querySelector("#tutorial-back").disabled = tutorialStep === 0;
+  const last = tutorialStep === 3;
+  demoStatus.hidden = !last;
+  demoStatus.classList.toggle("loading", !demoData && !demoError && demoAvailable !== false);
+  demoStatus.textContent = demoAvailable === false
+    ? "No demo clip on this server — drop your own video to try it"
+    : demoError || (demoData ? "Ready" : "Analyzing demo…");
+  tutorialNext.textContent = !last ? "Next" : demoError || demoAvailable === false ? "Close" : "Start demo tour";
+  tutorialNext.disabled = last && !demoError && demoAvailable !== false && !demoData;
+}
+async function prepareDemo() {
+  try {
+    const [status, analysisResponse, videoResponse] = await Promise.all([
+      fetch("/api/demo/status"),
+      fetch("/api/demo", {method: "POST"}),
+      fetch("/api/demo/video")
+    ]);
+    if (!status.ok) throw new Error("Unable to check demo availability.");
+    demoAvailable = (await status.json()).available;
+    if (!demoAvailable) return;
+    const payload = await analysisResponse.json();
+    if (!analysisResponse.ok) throw new Error(payload.error || "Unable to analyze demo.");
+    if (!videoResponse.ok) throw new Error("Unable to load demo video.");
+    const blob = await videoResponse.blob();
+    demoData = payload;
+    demoBlob = blob;
+  } catch (failure) { demoError = failure.message || "Unable to load demo."; }
+  finally { renderTutorial(); }
+}
+document.querySelector("#how-it-works").addEventListener("click", () => {
+  tutorialStep = 0;
+  renderTutorial();
+  tutorial.showModal();
+  if (!demoSession) demoSession = prepareDemo();
+});
+document.querySelector("#tutorial-back").addEventListener("click", () => { tutorialStep--; renderTutorial(); });
+document.querySelector("#tutorial-skip").addEventListener("click", () => tutorial.close());
+tutorialNext.addEventListener("click", () => {
+  if (tutorialStep < 3) { tutorialStep++; renderTutorial(); return; }
+  tutorial.close();
+  if (!demoData || !demoBlob) return;
+  reset();
+  demoMode = true;
+  tipsPending = true;
+  document.querySelectorAll(".demo-pill").forEach(pill => { pill.hidden = false; });
+  uploadSection.hidden = true;
+  renderResults(demoData.report);
+  startStage(demoBlob, demoData);
+});
+const tips = [
+  ["#scene-chips", "Jump between measurements anytime."],
+  [".speed-control", "Slow it down to see each landing."],
+  ["#close-btn", "Close for the full breakdown with all the numbers."]
+];
+function positionTip() {
+  if (tipIndex < 0) return;
+  const targetElement = document.querySelector(tips[tipIndex][0]);
+  const container = targetElement.getBoundingClientRect();
+  let target = container;
+  if (targetElement.id === "scene-chips") {
+    const visible = [...targetElement.querySelectorAll("button")]
+      .map(button => button.getBoundingClientRect())
+      .filter(rect => rect.width && rect.height && rect.right > container.left
+        && rect.left < container.right && rect.bottom > container.top && rect.top < container.bottom);
+    if (visible.length) {
+      const left = Math.max(container.left, Math.min(...visible.map(rect => rect.left)));
+      const right = Math.min(container.right, Math.max(...visible.map(rect => rect.right)));
+      target = {left, width: right - left,
+        top: Math.max(container.top, Math.min(...visible.map(rect => rect.top))),
+        bottom: Math.min(container.bottom, Math.max(...visible.map(rect => rect.bottom)))};
+    }
+  }
+  const width = coach.offsetWidth, height = coach.offsetHeight;
+  const x = Math.max(8, Math.min(innerWidth - width - 8, target.left + target.width / 2 - width / 2));
+  const bar = targetElement.closest("#control-bar");
+  const anchorTop = bar ? bar.getBoundingClientRect().top : target.top;
+  const below = !bar && target.top < height + 24;
+  const y = Math.max(8, Math.min(innerHeight - height - 8, below ? target.bottom + 12 : anchorTop - height - 12));
+  coach.style.left = `${x}px`;
+  coach.style.top = `${y}px`;
+  coach.classList.toggle("below", below);
+  coach.style.setProperty("--arrow-x", `${Math.max(12, Math.min(width - 12, target.left + target.width / 2 - x))}px`);
+}
+function dismissTips() {
+  tipIndex = -1;
+  coach.hidden = true;
+  showBar();
+}
+function showTip(index) {
+  if (index >= tips.length) { dismissTips(); return; }
+  tipIndex = index;
+  stage.append(coach);
+  coach.hidden = false;
+  document.querySelector("#coach-copy").textContent = tips[index][1];
+  document.querySelector("#coach-next").textContent = index === 2 ? "Got it" : "Next";
+  showBar();
+  positionTip();
+}
+document.querySelector("#coach-next").addEventListener("click", () => showTip(tipIndex + 1));
+document.querySelector("#coach-skip").addEventListener("click", dismissTips);
+window.addEventListener("resize", positionTip);
+window.addEventListener("scroll", positionTip, true);
+
 function reset() {
   clearStage();
+  demoMode = false;
+  tipsPending = false;
+  document.querySelectorAll(".demo-pill").forEach(pill => { pill.hidden = true; });
   input.value = "";
   results.hidden = true;
   processing.hidden = true;
@@ -134,8 +271,8 @@ function showBar() {
   barVisible = true;
   stage.classList.remove("controls-hidden");
   measureBar();
-  if (immersive) barTimer = setTimeout(() => {
-    if (barHovered || controlBar.contains(document.activeElement)) return;
+  if (immersive && tipIndex < 0) barTimer = setTimeout(() => {
+    if (tipIndex >= 0 || barHovered || controlBar.contains(document.activeElement)) return;
     barVisible = false;
     stage.classList.add("controls-hidden");
   }, 2500);
@@ -150,6 +287,7 @@ function setImmersive(value) {
   resizeCanvas();
 }
 async function leaveImmersive(scroll = true) {
+  dismissTips();
   setImmersive(false);
   if (document.fullscreenElement) {
     try { await document.exitFullscreen(); } catch { /* Fullscreen may be unavailable. */ }
@@ -180,6 +318,12 @@ document.addEventListener("fullscreenchange", () => {
   resizeCanvas();
 });
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && tipIndex >= 0) {
+    event.preventDefault();
+    dismissTips();
+    return;
+  }
+  if (tutorial.open) return;
   if (event.target.closest("input, textarea, select, [contenteditable]")) return;
   if (event.key.toLowerCase() === "f" && !results.hidden && !event.repeat) {
     event.preventDefault();
@@ -898,6 +1042,7 @@ function goLive() {
   playButton.disabled = false;
   replayButton.disabled = false;
   video.play().catch(() => { playButton.textContent = "Play"; });
+  if (demoMode && tipsPending) { tipsPending = false; showTip(0); }
 }
 
 function beginIntro() {
@@ -1032,7 +1177,7 @@ function tick(now) {
     freezeUntil = 0;
     if (!userPaused) video.play().catch(() => {});
   }
-  if (scene?.id === "knee" && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
+  if (scene?.id === "knee" && tipIndex < 0 && !userPaused && !freezeUntil && !video.paused && !video.seeking) {
     // A natural loop starts a new pass; explicit seeks only move the cursor.
     if (frameIndex < previousFrame) frozenStrikes.clear();
     const strikeIndex = measurement.strikes.findIndex((strike, i) =>

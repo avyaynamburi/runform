@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+from threading import Thread
 
 from runform.pipeline import analyze
 from runform.web import create_app
@@ -19,10 +20,22 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--model", type=Path)
+    serve.add_argument("--demo", type=Path)
     args = parser.parse_args(argv)
     if args.command == "serve":
         print(f"Running Form Analyzer at http://{args.host}:{args.port}")
-        create_app(args.model).run(host=args.host, port=args.port)
+        demo = args.demo
+        if demo is None and Path("samples/demo_run.mp4").is_file():
+            demo = Path("samples/demo_run.mp4")
+        app = create_app(args.model, demo=demo)
+        if demo is not None and demo.is_file():
+            def warm_demo():
+                try:
+                    app.extensions["runform_warm_demo"]()
+                except ValueError:
+                    pass  # The demo endpoint reports analysis errors to the visitor.
+            Thread(target=warm_demo, daemon=True).start()
+        app.run(host=args.host, port=args.port)
         return
     report = analyze(args.video, model=args.model).report
     args.out.write_text(json.dumps(report, indent=2) + "\n")

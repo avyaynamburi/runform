@@ -15,7 +15,7 @@ def test_index_and_static():
     assert b'type="file"' in response.data
     for element_id in (
         "title-card", "letterbox-top", "letterbox-bottom", "lower-third",
-        "control-bar", "fullscreen-btn", "close-btn",
+        "control-bar", "fullscreen-btn", "close-btn", "how-it-works", "tutorial",
     ):
         assert f'id="{element_id}"'.encode() in response.data
     assert b'id="chart-panel"' not in response.data
@@ -214,3 +214,85 @@ def test_foot_path_payload(monkeypatch, make_landmarks, moving):
         assert all(len(point) == 2 for point in loop)
         assert all(value == round(value, 4) for point in loop for value in point)
     assert path["target"][0][0] == .08
+
+
+
+def test_demo_cache_and_video(monkeypatch, tmp_path, make_landmarks):
+    clip = tmp_path / "demo.mp4"
+    clip.write_bytes(b"demo video bytes")
+    landmarks = make_landmarks(300, 30, cadence_spm=170, foot_swing=.3, near="right")
+    calls = []
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
+
+    def extract(frames, fps, model=None):
+        calls.append(model)
+        return landmarks
+
+    monkeypatch.setattr("runform.pipeline.extract_landmarks", extract)
+    client = create_app(model="custom.task", demo=clip).test_client()
+    assert client.get("/api/demo/status").json == {"available": True, "ready": False}
+    response = client.post("/api/demo")
+    assert response.status_code == 200
+    assert response.json["demo"] is True
+    assert response.json["report"]["cadence_spm"] == pytest.approx(170, abs=3)
+    assert len(response.json["foot_path"]["actual"]) == 100
+    assert len(response.json["foot_path"]["target"]) == 100
+    assert client.get("/api/demo/status").json == {"available": True, "ready": True}
+    assert client.post("/api/demo").json == response.json
+    assert calls == ["custom.task"]
+    video = client.get("/api/demo/video")
+    assert video.data == clip.read_bytes()
+    video.close()
+
+
+def test_no_demo():
+    client = create_app().test_client()
+    assert client.get("/api/demo/status").json == {"available": False, "ready": False}
+    for method, path in ((client.post, "/api/demo"), (client.get, "/api/demo/video")):
+        response = method(path)
+        assert response.status_code == 404
+        assert response.json["error"]
+
+
+def test_demo_invalid(monkeypatch, tmp_path):
+    clip = tmp_path / "bad.mp4"
+    clip.write_bytes(b"bad")
+
+    def analyze(*args, **kwargs):
+        raise ValueError("Cannot open video")
+
+    monkeypatch.setattr("runform.pipeline.analyze", analyze)
+    client = create_app(demo=clip).test_client()
+    assert client.post("/api/demo").status_code == 422
+    assert client.post("/api/demo").json == {"error": "Cannot open video"}
+    assert client.get("/api/demo/status").json["ready"] is False
+
+
+def test_demo_concurrent_warmup(monkeypatch, tmp_path, make_landmarks):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from runform import pipeline
+
+    clip = tmp_path / "demo.mp4"
+    clip.write_bytes(b"demo")
+    clean = make_landmarks(10, 30)
+    entered = Event()
+    release = Event()
+    calls = []
+
+    def analyze(path, model=None):
+        calls.append(path)
+        entered.set()
+        assert release.wait(2)
+        return pipeline.Analysis({"warnings": []}, clean, clean, [], "left")
+
+    monkeypatch.setattr(pipeline, "analyze", analyze)
+    app = create_app(demo=clip)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        warmup = executor.submit(app.extensions["runform_warm_demo"])
+        assert entered.wait(2)
+        request = executor.submit(lambda: app.test_client().post("/api/demo"))
+        release.set()
+        assert request.result().json == warmup.result()
+    assert calls == [clip]

@@ -177,7 +177,7 @@ def test_analyze_noise_and_dropout(
          "0.0.0.0", 9000, "pose.task"),
     ],
 )
-def test_serve(monkeypatch, capsys, options, host, port, model_name):
+def test_serve(monkeypatch, capsys, tmp_path, options, host, port, model_name):
     from pathlib import Path
 
     calls = []
@@ -186,7 +186,10 @@ def test_serve(monkeypatch, capsys, options, host, port, model_name):
         def run(self, **kwargs):
             calls.append(kwargs)
 
-    def create_app(model):
+    monkeypatch.chdir(tmp_path)
+
+    def create_app(model, demo=None):
+        assert demo is None
         assert model == (Path(model_name) if model_name else None)
         return App()
 
@@ -210,3 +213,31 @@ def test_analyze_overstride(monkeypatch, tmp_path, make_landmarks, capsys):
     assert report["overstride_rel"] == round(report["overstride_rel"], 3)
     assert (f"Overstride: {report['overstride_rel']} of body height ahead of hips"
             in capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_serve_demo(monkeypatch, tmp_path, explicit):
+    from threading import Event
+
+    from flask import Flask
+
+    from runform.web import create_app as real_create_app
+
+    monkeypatch.chdir(tmp_path)
+    clip = tmp_path / "samples" / "demo_run.mp4"
+    clip.parent.mkdir()
+    clip.write_bytes(b"demo")
+    warmed = Event()
+    calls = []
+
+    def create_app(model=None, demo=None):
+        assert demo == (clip if explicit else type(clip)("samples/demo_run.mp4"))
+        app = real_create_app(model, demo=demo)
+        app.extensions["runform_warm_demo"] = warmed.set
+        return app
+
+    monkeypatch.setattr("runform.cli.create_app", create_app)
+    monkeypatch.setattr(Flask, "run", lambda self, **kwargs: calls.append(kwargs))
+    main(["serve", "--port", "9", *(["--demo", str(clip)] if explicit else [])])
+    assert calls == [{"host": "127.0.0.1", "port": 9}]
+    assert warmed.wait(1)

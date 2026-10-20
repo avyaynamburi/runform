@@ -25,6 +25,7 @@
         <span class="hint">SIDE VIEW · UP TO 300 MB</span>
       </label>
       <p class="tip">For a clear read, keep your full body in frame and the camera steady.</p>
+      <button id="how-it-works" type="button"><span aria-hidden="true">▷</span> How it works</button>
     </section>
     <section id="processing" hidden role="status" aria-live="polite">
       <div class="pulse" aria-hidden="true"></div>
@@ -33,10 +34,11 @@
     </section>
     <p id="error" class="error" role="alert" hidden></p>
     <section id="results" hidden aria-labelledby="results-title">
-      <div class="results-header"><div><p class="eyebrow">YOUR MOVEMENT, MEASURED</p><h2 id="results-title">Stride overview</h2></div><button id="reset" type="button">Analyze another video <span aria-hidden="true">↗</span></button></div>
+      <div class="results-header"><div><p class="eyebrow">YOUR MOVEMENT, MEASURED</p><span class="demo-pill" hidden>DEMO CLIP</span><h2 id="results-title">Stride overview</h2></div><button id="reset" type="button">Analyze another video <span aria-hidden="true">↗</span></button></div>
       <div id="warnings" class="warnings" role="status" hidden></div>
       <div class="stage-shell">
       <div class="video-stage" id="video-stage">
+        <span class="demo-pill stage-demo" hidden>DEMO CLIP</span>
         <canvas id="backdrop" aria-hidden="true" hidden></canvas>
         <video id="runner-video" muted playsinline loop preload="auto" aria-label="Your running clip"></video>
         <div id="intro-veil" class="intro-veil"></div>
@@ -77,5 +79,17 @@
     </section>
     <footer>RUNFORM <span>Small details. A clearer picture.</span></footer>
   </main>
+  <dialog id="tutorial" aria-labelledby="tutorial-title">
+    <p class="eyebrow">HOW IT WORKS <span id="tutorial-counter"></span></p>
+    <div id="tutorial-dots" aria-hidden="true"></div>
+    <div id="tutorial-number" aria-hidden="true"></div>
+    <svg id="tutorial-art" viewBox="0 0 240 90" aria-hidden="true"></svg>
+    <h2 id="tutorial-title"></h2><p id="tutorial-copy"></p>
+    <p id="demo-status" role="status" hidden></p>
+    <div class="tutorial-actions"><button id="tutorial-back" type="button">Back</button><button id="tutorial-next" type="button">Next</button><button id="tutorial-skip" class="text-button" type="button">Skip</button></div>
+  </dialog>
+  <aside id="coach-mark" hidden aria-label="Demo tip">
+    <p id="coach-copy"></p><button id="coach-next" type="button">Next</button><button id="coach-skip" class="text-button" type="button">Skip tips</button>
+  </aside>
 </body>
 </html>
