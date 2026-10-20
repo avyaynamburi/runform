@@ -32,6 +32,7 @@ function renderResults(report) {
     ["Trunk lean", number(report.trunk_lean_deg, "°"), "", "Your average torso angle from vertical."],
     ["Knee at strike", knee == null ? "—" : `${number(knee.mean)} ± ${number(knee.std)}°`, "", "Your knee angle at landing, with its variation."],
     ["Vertical oscillation", number(report.vertical_oscillation_rel == null ? null : report.vertical_oscillation_rel * 100, "%"), "", "Your up-and-down movement as a share of body height."],
+    ["Overstride", number(report.overstride_rel == null ? null : report.overstride_rel * 100, "%"), "of body height", "How far ahead of your hips your foot lands. Closer is usually better."],
     ["Frames with pose", report.frames_with_pose == null || report.frames_total == null ? "—" : `${report.frames_with_pose} / ${report.frames_total}`, "", "Video frames where your full pose was detected."]
   ];
   const cards = document.querySelector("#cards");
@@ -252,7 +253,7 @@ function computeFramings() {
   const full = {cx: .5, cy: .5, scale: 1};
   framings = {full, summary: full};
   const regions = {intro: [0,11,12,23,24], "trunk-lean": [0,11,12,23,24],
-    cadence: [27,28,29,30,31,32], knee: [23,24,25,26,27,28,29,30,31,32], bounce: [11,12,23,24]};
+    cadence: [27,28,29,30,31,32], knee: [23,24,25,26,27,28,29,30,31,32], bounce: [11,12,23,24], "foot-path": [23,24,25,26,27,28,29,30,31,32]};
   const percentile = (values, fraction) => {
     const index = (values.length - 1) * fraction;
     const low = Math.floor(index), high = Math.ceil(index);
@@ -347,6 +348,9 @@ function rateMultiplier() {
   else if (scene.id === "knee") multiplier = proximity(measurement.strikes.map(s => s.frame), .3, 0);
   else if (scene.id === "bounce") {
     multiplier = proximity(measurement.strides.filter(s => s.foot === measurement.strides[0]?.foot).map(s => s.top), .4, 3);
+  } else if (scene.id === "foot-path") {
+    const events = measurement.strikes.filter(s => s.foot === measurement.report.near_side).map(s => s.frame);
+    multiplier = .6 * proximity(events, .35 / .6, 3);
   } else if (scene.id === "summary") multiplier = 1 + smoothstep(sceneElapsed / 1000);
   if (tourStart) {
     // Finish the opening ramp before smoothly introducing landing slow motion.
@@ -410,6 +414,13 @@ const scenes = [
     draw: drawBounce
   },
   {
+    id: "foot-path", title: "Foot path", chip: "Foot path",
+    value: report => metricValue(report.overstride_rel == null ? null : report.overstride_rel * 100, "% ahead"),
+    caption: "Your ankle's path (solid) vs. a target that lands under your hips (dashed).",
+    captionNote: "Target = your own stride with the landing adjusted — not a universal ideal.",
+    draw: drawFootPath
+  },
+  {
     id: "summary", title: "Your stride", chip: "Summary",
     value: () => "",
     caption: "That's your stride.",
@@ -434,11 +445,11 @@ function updateLowerThird() {
   lowerThird.style.opacity = String(entrance * clamp((sceneDuration() - sceneElapsed) / 500));
   lowerThird.style.transform = `translateY(${12 * (1 - entrance)}px)`;
   const count = reducedMotion.matches ? 1 : ease(clamp(age / 900));
-  const animatedValue = item => item.value(measurement.report).replace(/-?\d+(?:\.\d+)?/g,
+  const animatedValue = item => (item.id === "foot-path" && scene.id !== "summary" && !measurement.foot_path ? "—" : item.value(measurement.report)).replace(/-?\d+(?:\.\d+)?/g,
     value => (Number(value) * count).toFixed(1));
   document.querySelector("#scene-value").textContent = animatedValue(scene);
   document.querySelectorAll("#scene-summary strong").forEach((node, i) => {
-    node.textContent = animatedValue(scenes[i]);
+    node.textContent = animatedValue(scenes[i]).replace("% ahead", "%");
   });
 }
 
@@ -472,16 +483,16 @@ function startScene(next, incoming = true) {
   sceneChips.querySelectorAll("button").forEach(chip => {
     chip.setAttribute("aria-pressed", String(chip.dataset.scene === scene?.id));
   });
-  lowerThird.style.setProperty("--scene-accent", scene?.accent || "#22d3ee");
+  lowerThird.style.setProperty("--scene-accent", scene?.id === "foot-path" ? (measurement.report.near_side === "right" ? "#a78bfa" : "#22d3ee") : scene?.accent || "#22d3ee");
   const summary = document.querySelector("#scene-summary");
   summary.replaceChildren();
   summary.hidden = scene?.id !== "summary";
   document.querySelector("#scene-value").hidden = scene?.id === "summary";
   if (scene?.id === "summary") {
-    scenes.slice(0, 4).forEach(item => {
+    scenes.slice(0, 5).forEach(item => {
       const cell = document.createElement("div");
       const name = document.createElement("small");
-      name.textContent = item.chip || item.title;
+      name.textContent = item.id === "foot-path" ? "Overstride" : item.chip || item.title;
       const value = document.createElement("strong");
       value.textContent = item.value(measurement.report);
       cell.append(name, value);
@@ -491,7 +502,14 @@ function startScene(next, incoming = true) {
   if (scene) {
     document.querySelector("#scene-title").textContent = `0${scenes.indexOf(scene) + 1} · ${scene.id === "bounce" ? "Bounce" : scene.id === "summary" ? "Summary" : scene.title}`;
     document.querySelector("#scene-value").textContent = scene.value(measurement.report);
-    document.querySelector("#scene-caption").textContent = scene.caption;
+    const caption = document.querySelector("#scene-caption");
+    caption.textContent = scene.caption;
+    if (scene.captionNote) {
+      const note = document.createElement("span");
+      note.className = "caption-note";
+      note.textContent = scene.captionNote;
+      caption.append(note);
+    }
   }
 }
 
@@ -661,6 +679,76 @@ function hipPoint(index) {
   if (!frame?.[23] || !frame[24]) return null;
   return project([(frame[23][0] + frame[24][0]) / 2,
     (frame[23][1] + frame[24][1]) / 2]);
+}
+
+function drawFootPath(ctx, frame, index) {
+  const path = measurement.foot_path;
+  const hip = hipPoint(index);
+  if (!path || !hip) return;
+  const bh = measurement.bodyHeight;
+  if (!(bh > 0)) return;
+  const bhPx = project([0, bh])[1] - project([0, 0])[1];
+  const direction = facing(frame);
+  const point = ([x,y]) => [hip[0] + x * bhPx * direction, hip[1] - y * bhPx];
+  const accent = path.side === "right" ? "#a78bfa" : "#22d3ee";
+  const alpha = ctx.globalAlpha;
+  const ankle = path.side === "left" ? 27 : 28;
+  const history = Math.max(1, Math.round(.7 * pose.fps));
+  ctx.strokeStyle = ctx.shadowColor = accent;
+  ctx.lineWidth = 3; ctx.shadowBlur = 12;
+  let previous = null;
+  for (let i = Math.max(0, index - history); i <= index; i++) {
+    const sample = pose.frames[i]?.[ankle];
+    if (!sample) { previous = null; continue; }
+    const current = project(sample);
+    ctx.globalAlpha = alpha * Math.max(0, 1 - (index - i) / history);
+    if (previous) { ctx.beginPath(); ctx.moveTo(...previous); ctx.lineTo(...current); ctx.stroke(); }
+    previous = current;
+  }
+  ctx.globalAlpha = alpha;
+  const loop = values => {
+    ctx.beginPath();
+    values.forEach((value, i) => { const p = point(value); if (i) ctx.lineTo(...p); else ctx.moveTo(...p); });
+    ctx.closePath(); ctx.stroke();
+  };
+  loop(path.actual);
+  ctx.shadowBlur = 0; ctx.lineWidth = 2;
+  ctx.strokeStyle = "white"; ctx.globalAlpha = alpha * .85; ctx.setLineDash([6,5]);
+  loop(path.target);
+  ctx.setLineDash([]); ctx.globalAlpha = alpha;
+  const strikes = measurement.strikes.filter(s => s.foot === path.side);
+  const last = strikes.filter(s => s.frame <= index).at(-1);
+  const next = strikes.find(s => s.frame > index);
+  if (last && next) {
+    const cursor = (index - last.frame) / (next.frame - last.frame) * path.actual.length;
+    const i = Math.floor(cursor), t = cursor - i;
+    const a = path.actual[i % path.actual.length], b = path.actual[(i + 1) % path.actual.length];
+    ctx.fillStyle = ctx.shadowColor = accent; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.arc(...point(a.map((v,j) => v + (b[j] - v) * t)), 5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  const landing = point(path.actual[0]), target = point(path.target[0]);
+  const correction = path.actual[0][0] - path.target[0][0] >= .01;
+  if (correction) {
+    ctx.strokeStyle = "white"; ctx.lineWidth = 2;
+    const angle = Math.atan2(target[1] - landing[1], target[0] - landing[0]);
+    ctx.beginPath(); ctx.moveTo(...landing); ctx.lineTo(...target);
+    ctx.moveTo(target[0] - 7 * Math.cos(angle - .5), target[1] - 7 * Math.sin(angle - .5));
+    ctx.lineTo(...target);
+    ctx.lineTo(target[0] - 7 * Math.cos(angle + .5), target[1] - 7 * Math.sin(angle + .5)); ctx.stroke();
+  }
+  const text = correction ? `lands ${(measurement.report.overstride_rel * 100).toFixed(1)}% BH ahead → target ${(path.landing_target * 100).toFixed(0)}%` : "lands under hips ✓";
+  // Fit even narrow safe areas before applying the shared HUD clamp.
+  const area = safeArea();
+  ctx.font = "bold 15px monospace";
+  const fontSize = Math.min(15, 15 * Math.max(1, area.right - area.left - 12) / ctx.measureText(text).width);
+  ctx.font = `bold ${fontSize}px monospace`; ctx.textBaseline = "top";
+  const width = Math.min(area.right - area.left, ctx.measureText(text).width + 12);
+  const height = Math.min(27, area.bottom - area.top);
+  const [x,y] = hudPosition(landing[0] - width / 2, landing[1] - 36, width, height);
+  ctx.fillStyle = "rgba(11,23,37,.85)";
+  ctx.beginPath(); ctx.roundRect(x, y, width, height, Math.min(6, height / 2)); ctx.fill();
+  ctx.fillStyle = "white"; ctx.fillText(text, x + 6, y + Math.max(0, (height - fontSize) / 2));
 }
 
 function drawBounce(ctx, frame, index) {
@@ -848,6 +936,13 @@ function startStage(file, data) {
   setImmersive(true);
   measurement = data;
   pose = data.pose;
+  const heights = pose.frames.filter(f => f && [11,12,27,28].every(i => f[i]))
+    .map(f => (f[27][1] + f[28][1] - f[11][1] - f[12][1]) / 2)
+    .filter(Number.isFinite).sort((a,b) => a-b);
+
+  const middle = Math.floor(heights.length / 2);
+  measurement.bodyHeight = !heights.length ? null : heights.length % 2
+    ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2;
   firstFrame = Math.max(0, pose.frames.findIndex(frame => frame !== null));
   objectURL = URL.createObjectURL(file);
   video.muted = true;

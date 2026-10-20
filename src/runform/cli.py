@@ -42,5 +42,11 @@ def main(argv: list[str] | None = None) -> None:
         "unavailable" if oscillation is None else f"{oscillation} of body height"
     )
     print(f"Vertical oscillation: {oscillation_text}")
+    overstride = report["overstride_rel"]
+    overstride_text = (
+        "unavailable" if overstride is None
+        else f"{overstride} of body height ahead of hips"
+    )
+    print(f"Overstride: {overstride_text}")
     for warning in report["warnings"]:
         print(f"Warning: {warning}")

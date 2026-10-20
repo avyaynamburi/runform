@@ -99,3 +99,56 @@ def trunk_lean(lm: Landmarks) -> np.ndarray:
     dx = (shoulders[:, 0] - hips[:, 0]) * lm.aspect * facing_sign(lm)
     dy = hips[:, 1] - shoulders[:, 1]
     return np.degrees(np.arctan2(dx, dy))
+
+
+LANDING_TARGET = 0.08
+
+
+def near_side(lm: Landmarks) -> str:
+    means = []
+    for ids in ([27, 29, 31], [28, 30, 32]):
+        values = lm.data[:, ids, 2]
+        values = values[~np.isnan(values)]
+        means.append(float(values.mean()) if len(values) else -np.inf)
+    return "right" if means[1] > means[0] else "left"
+
+
+def foot_offsets(lm: Landmarks, side: str) -> np.ndarray:
+    height = body_height(lm)
+    if np.isnan(height):
+        return np.full((len(lm.data), 2), np.nan)
+    hips = lm.data[:, [23, 24], :2].mean(axis=1)
+    ankle = lm.data[:, 27 if side == "left" else 28, :2]
+    return (ankle - hips) * [lm.aspect * facing_sign(lm), -1] / height
+
+
+def overstride(lm: Landmarks, strikes: list[Strike], side: str) -> np.ndarray:
+    frames = [s.frame for s in strikes if s.foot == side]
+    values = foot_offsets(lm, side)[frames, 0]
+    return values[~np.isnan(values)]
+
+
+def foot_path(
+    lm: Landmarks, strikes: list[Strike], side: str, n: int = 100,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    offsets = foot_offsets(lm, side)
+    frames = sorted(s.frame for s in strikes if s.foot == side)
+    windows = []
+    for a, b in zip(frames, frames[1:], strict=False):
+        window = offsets[a:b + 1]
+        if b <= a or not np.isfinite(window).all():
+            continue
+        times = np.linspace(a, b, n)
+        windows.append(np.column_stack([
+            np.interp(times, np.arange(a, b + 1), window[:, axis])
+            for axis in range(2)
+        ]))
+    if not windows:
+        return None
+    actual = np.median(windows, axis=0)
+    target = actual.copy()
+    if actual[0, 0] > LANDING_TARGET:
+        i = np.arange(n)
+        weight = np.exp(-(np.minimum(i, n - i) / 12) ** 2)
+        target[:, 0] -= (actual[0, 0] - LANDING_TARGET) * weight
+    return actual, target

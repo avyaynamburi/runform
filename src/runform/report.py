@@ -10,9 +10,15 @@ def build_report(
     trunk_lean_deg: np.ndarray,
     knee_flexion_at_strike_deg: np.ndarray,
     vertical_oscillation_rel: np.ndarray,
+    overstride_rel: np.ndarray,
+    near_side: str,
     warnings: list[str],
-) -> dict[str, float | int | dict[str, float] | list[str] | None]:
+) -> dict[str, float | int | str | dict[str, float] | list[str] | None]:
     return {
+        "overstride_rel": (
+            round(float(np.mean(overstride_rel)), 3) if len(overstride_rel) else None
+        ),
+        "near_side": near_side,
         "warnings": warnings,
         "fps": float(landmarks.fps),
         "frames_total": len(landmarks.data),

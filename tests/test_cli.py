@@ -28,6 +28,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
         "trunk_lean_deg": 0.0,
         "knee_flexion_at_strike_deg": None,
         "vertical_oscillation_rel": None,
+        "overstride_rel": None, "near_side": "left",
         "warnings": [],
     }
     summary = capsys.readouterr().out
@@ -38,6 +39,7 @@ def test_analyze_report(monkeypatch, tmp_path, make_landmarks, capsys):
     assert "Trunk lean: 0.0 deg" in summary
     assert "Knee at strike: unavailable" in summary
     assert "Vertical oscillation: unavailable" in summary
+    assert "Overstride: unavailable" in summary
 
 
 def test_analyze_vertical_oscillation(monkeypatch, tmp_path, make_landmarks, capsys):
@@ -192,3 +194,19 @@ def test_serve(monkeypatch, capsys, options, host, port, model_name):
     main(["serve", *options])
     assert calls == [{"host": host, "port": port}]
     assert capsys.readouterr().out == f"Running Form Analyzer at http://{host}:{port}\n"
+
+
+def test_analyze_overstride(monkeypatch, tmp_path, make_landmarks, capsys):
+    landmarks = make_landmarks(300, 30, cadence_spm=170, foot_swing=.3, near="right")
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    output = tmp_path / "report.json"
+    main(["analyze", "x.mp4", "--out", str(output)])
+    report = json.loads(output.read_text())
+    assert report["near_side"] == "right"
+    assert report["overstride_rel"] == pytest.approx(.4 / .6, abs=.01)
+    assert report["overstride_rel"] == round(report["overstride_rel"], 3)
+    assert (f"Overstride: {report['overstride_rel']} of body height ahead of hips"
+            in capsys.readouterr().out)

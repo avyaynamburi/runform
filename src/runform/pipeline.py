@@ -7,7 +7,13 @@ import numpy as np
 
 from runform.gait import Strike, cadence, detect_foot_strikes
 from runform.landmarks import Landmarks
-from runform.metrics import knee_flexion_at_strikes, trunk_lean, vertical_oscillation
+from runform.metrics import (
+    knee_flexion_at_strikes,
+    near_side,
+    overstride,
+    trunk_lean,
+    vertical_oscillation,
+)
 from runform.pose import extract_landmarks
 from runform.report import build_report
 from runform.smoothing import fill_gaps, smooth
@@ -20,6 +26,7 @@ class Analysis:
     raw: Landmarks
     clean: Landmarks
     strikes: list[Strike]
+    near_side: str
 
 
 def analyze(path: str | Path, model: str | Path | None = None) -> Analysis:
@@ -35,9 +42,10 @@ def analyze(path: str | Path, model: str | Path | None = None) -> Analysis:
             f"Pose detected in only {pct:.0f}% of frames; metrics may be unreliable"
         )
     strikes = detect_foot_strikes(clean)
+    side = near_side(landmarks)
     report = build_report(
         landmarks, len(strikes), cadence(strikes, fps), trunk_lean(clean),
         knee_flexion_at_strikes(clean, strikes),
-        vertical_oscillation(clean, strikes), warnings,
+        vertical_oscillation(clean, strikes), overstride(clean, strikes, side), side, warnings,
     )
-    return Analysis(report, landmarks, clean, strikes)
+    return Analysis(report, landmarks, clean, strikes, side)

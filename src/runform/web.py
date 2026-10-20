@@ -53,7 +53,14 @@ def create_app(model: str | Path | None = None) -> Flask:
                 {**asdict(stride), "value": round(stride.value, 4)}
                 for stride in metrics.oscillation_strides(analysis.clean, analysis.strikes)
             ]
+            path = metrics.foot_path(analysis.clean, analysis.strikes, analysis.near_side)
+            path_payload = None if path is None else {
+                "side": analysis.near_side, "actual": path[0].round(4).tolist(),
+                "target": path[1].round(4).tolist(),
+                "landing_target": metrics.LANDING_TARGET,
+            }
             return jsonify(
+                foot_path=path_payload,
                 strides=strides,
                 report=analysis.report, pose=_pose_payload(analysis.clean),
                 strikes=[{"frame": int(strike.frame), "foot": strike.foot}

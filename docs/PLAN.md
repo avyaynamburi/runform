@@ -227,7 +227,7 @@ src/runform/
 | W8 | Speed ramps: slow-mo on key moments, fast transitions | done |
 | W9 | Locked framing per scene; tour ends on the summary | done |
 | W10 | Immersive fullscreen experience | done |
-| W11 | Foot path vs. target path (+ overstride metric) | todo |
+| W11 | Foot path vs. target path (+ overstride metric) | done |
 
 ### W1 — Upload → stat cards
 - Goal: `runform serve` opens a page. You upload a video, a "processing" state shows while the server analyzes it, and the report appears as stat cards (cadence, trunk lean, knee at strike, vertical oscillation, plus frames with pose and warnings).

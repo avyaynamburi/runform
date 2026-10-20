@@ -137,7 +137,7 @@ def test_analyze_pose_missing_points_and_rounding(monkeypatch, make_landmarks):
     report = {"warnings": [], "frames_total": 3}
     monkeypatch.setattr(
         "runform.pipeline.analyze", lambda *args, **kwargs:
-        Analysis(report, clean, clean, []),
+        Analysis(report, clean, clean, [], "left"),
     )
     response = create_app().test_client().post(
         "/api/analyze", data={"video": (io.BytesIO(b"fake"), "run.mp4")},
@@ -163,7 +163,7 @@ def test_analyze_measurement_tour(monkeypatch, make_landmarks):
     clean.data[2] = np.nan
     clean.data[1, 25, :2] = np.nan
     strikes = [Strike(1, "left"), Strike(4, "right")]
-    analysis = Analysis({"warnings": []}, clean, clean, strikes)
+    analysis = Analysis({"warnings": []}, clean, clean, strikes, "left")
     monkeypatch.setattr("runform.pipeline.analyze", lambda *args, **kwargs: analysis)
     response = create_app().test_client().post(
         "/api/analyze", data={"video": (io.BytesIO(b"fake"), "run.mp4")},
@@ -186,3 +186,31 @@ def test_analyze_measurement_tour(monkeypatch, make_landmarks):
     assert len(knees) == len(strikes)
     assert knees[0] is None
     assert knees[1] == pytest.approx(180)
+
+
+@pytest.mark.parametrize("moving", [False, True])
+def test_foot_path_payload(monkeypatch, make_landmarks, moving):
+    landmarks = make_landmarks(300, 30, cadence_spm=170 if moving else None,
+                               foot_swing=.3, near="right")
+    monkeypatch.setattr("runform.pipeline.read_frames", lambda path: ([], 30))
+    monkeypatch.setattr(
+        "runform.pipeline.extract_landmarks", lambda frames, fps, model=None: landmarks
+    )
+    response = create_app().test_client().post(
+        "/api/analyze", data={"video": (io.BytesIO(b"fake"), "run.mp4")},
+    )
+    assert response.status_code == 200
+    assert response.json["report"]["near_side"] == "right"
+    path = response.json["foot_path"]
+    if not moving:
+        assert path is None
+        assert response.json["report"]["overstride_rel"] is None
+        return
+    assert response.json["report"]["overstride_rel"] == pytest.approx(.4 / .6, abs=.01)
+    assert path["side"] == "right"
+    assert path["landing_target"] == .08
+    assert len(path["actual"]) == len(path["target"]) == 100
+    for loop in (path["actual"], path["target"]):
+        assert all(len(point) == 2 for point in loop)
+        assert all(value == round(value, 4) for point in loop for value in point)
+    assert path["target"][0][0] == .08

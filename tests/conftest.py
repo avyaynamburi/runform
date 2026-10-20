@@ -11,6 +11,7 @@ def make_landmarks():
     def make(
         n_frames, fps, cadence_spm=None, noise=0.0, seed=0, double_bump=False,
         lean_deg=0.0, aspect=1.0, knee_deg=180.0, hip_amp=0.0, dropout=0.0,
+        foot_swing=0.0, near=None,
     ):
         pose = np.full((33, 3), (0.5, 0.5, 1.0))
         for left, right, height in [(11, 12, 0.3), (23, 24, 0.5), (25, 26, 0.7), (27, 28, 0.9)]:
@@ -22,6 +23,8 @@ def make_landmarks():
         pose[[11, 12], 0] += np.tan(np.radians(lean_deg)) * (0.5 - 0.3) / aspect
         data = np.repeat(pose[None], n_frames, axis=0)
         data[:, [25, 26], 0] += 0.2 * np.tan(np.radians((180 - knee_deg) / 2)) / aspect
+        if near in ("left", "right"):
+            data[:, [28, 30, 32] if near == "left" else [27, 29, 31], 2] = 0.6
         if cadence_spm is not None:
             t = np.arange(n_frames) / fps
             stride_seconds = 2 * 60 / cadence_spm
@@ -29,6 +32,8 @@ def make_landmarks():
             data[:, [11, 12, 23, 24], 1] += (hip_amp * np.sin(2 * w * t))[:, None]
             for heel, phase in [(29, 0), (30, np.pi)]:
                 sine = np.sin(2 * np.pi * (cadence_spm / 2 / 60) * t + phase)
+                ids = [27, 29, 31] if heel == 29 else [28, 30, 32]
+                data[:, ids, 0] += (foot_swing * sine)[:, None]
                 angles = knee_deg - 20 * (1 - sine)
                 knee = 25 if heel == 29 else 26
                 data[:, knee, 0] = (

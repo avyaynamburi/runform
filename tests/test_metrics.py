@@ -171,3 +171,56 @@ def test_hip_height_missing_hips_and_invalid_height(make_landmarks):
         lm = make_landmarks(5, 30)
         lm.data[:, [27, 28], 1] = .2
         assert np.isnan(hip_height(lm)).all()
+
+
+def test_near_side(make_landmarks):
+    from runform.metrics import near_side
+
+    assert near_side(make_landmarks(10, 30)) == "left"
+    assert near_side(make_landmarks(10, 30, near="right")) == "right"
+
+
+def test_overstride_and_path(make_landmarks):
+    from runform.gait import detect_foot_strikes
+    from runform.metrics import foot_offsets, foot_path, overstride
+
+    lm = make_landmarks(300, 30, cadence_spm=170, foot_swing=.05,
+                        near="left", aspect=720 / 1008)
+    strikes = detect_foot_strikes(lm)
+    expected = ((.4 + .05) - .5) * lm.aspect / .6
+    np.testing.assert_allclose(overstride(lm, strikes, "left"), expected, atol=.002)
+    offsets = foot_offsets(lm, "left")
+    assert offsets.shape == (300, 2)
+    assert offsets[0, 1] == pytest.approx(-.4 / .6)
+    lm.data[:, :, 0] = 1 - lm.data[:, :, 0]
+    np.testing.assert_allclose(foot_offsets(lm, "left"), offsets)
+    lm = make_landmarks(300, 30, cadence_spm=170, foot_swing=.3)
+    strikes = detect_foot_strikes(lm)
+    actual, target = foot_path(lm, strikes, "left")
+    assert actual.shape == target.shape == (100, 2)
+    assert actual[0, 0] == pytest.approx(overstride(lm, strikes, "left").mean(), abs=.01)
+    assert target[0, 0] == pytest.approx(.08, abs=1e-6)
+    np.testing.assert_allclose(target[50], actual[50], atol=1e-7)
+    np.testing.assert_array_equal(target[:, 1], actual[:, 1])
+    assert foot_path(lm, [Strike(0, "left"), Strike(1, "right")], "left") is None
+    lm.data[:] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        from runform.metrics import near_side
+        assert near_side(lm) == "left"
+        assert np.isnan(foot_offsets(lm, "left")).all()
+        assert overstride(lm, strikes, "left").size == 0
+        assert foot_path(lm, strikes, "left") is None
+
+
+def test_foot_path_missing_window_and_no_correction(make_landmarks):
+    from runform.metrics import foot_path
+
+    lm = make_landmarks(6, 30)
+    strikes = [Strike(0, "left"), Strike(2, "left"), Strike(5, "left")]
+    lm.data[1, 27, 0] = np.nan
+    actual, target = foot_path(lm, strikes, "left", n=7)
+    assert actual.shape == (7, 2)
+    np.testing.assert_array_equal(actual, target)
+    lm.data[3, 27, 0] = np.nan
+    assert foot_path(lm, strikes, "left") is None
