@@ -1,0 +1,14 @@
+/* Shared identity and navigation for Runform's two workspaces. */
+.app-header { position: static; height: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; padding: 0 0 26px; border-bottom: 1px solid #263442; background: transparent; }
+.app-header .brand { text-decoration: none; color: #22d3ee; font-weight: 800; letter-spacing: .12em; font-size: 15px; white-space: nowrap; }
+.app-header .brand span { color: #8d9aa9; font-weight: 400; font-size: 11px; }
+.app-nav { display: flex; gap: 5px; padding: 5px; border: 1px solid #263442; border-radius: 11px; }
+.app-nav a { color: #9fb1bf; text-decoration: none; font-size: 14px; padding: 9px 12px; border-radius: 7px; white-space: nowrap; }
+.app-nav a:hover { color: #e7edf4; background: #152631; }
+.app-nav a[aria-current="page"] { color: #a9edf6; background: #173541; }
+.app-header .tag { border: 1px solid #2b434b; color: #9cbdc4; padding: 8px 10px; border-radius: 5px; font: 11px ui-monospace, monospace; letter-spacing: .13em; }
+.app-nav a:focus-visible { outline: 2px solid #22d3ee; outline-offset: 3px; }
+[data-theme="light"] .app-nav a { color: #455e6e; }
+[data-theme="light"] .app-nav a[aria-current="page"] { color: #087f99; background: #e5f4f7; }
+@media(max-width: 1050px) { .app-header .tag { display: none; } }
+@media(max-width: 640px) { .app-header { gap: 18px; } .app-nav { width: 100%; } .app-nav a { flex: 1; text-align: center; padding: 10px 6px; } }
