@@ -9,6 +9,7 @@ import numpy as np
 from flask import Flask, jsonify, request, send_file
 
 from runform import metrics, pipeline
+from runform.garmin import create_blueprint
 from runform.landmarks import Landmarks
 
 
@@ -64,6 +65,11 @@ def create_app(
 ) -> Flask:
     app = Flask(__name__, static_folder="static")
     app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024
+    app.register_blueprint(create_blueprint())
+
+    @app.get("/garmin")
+    def garmin_index():
+        return app.send_static_file("garmin.html")
 
     demo_path = Path(demo).resolve() if demo is not None else None
     demo_lock = Lock()

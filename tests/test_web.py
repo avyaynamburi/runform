@@ -296,3 +296,23 @@ def test_demo_concurrent_warmup(monkeypatch, tmp_path, make_landmarks):
         release.set()
         assert request.result().json == warmup.result()
     assert calls == [clip]
+
+
+def test_garmin_tab_and_demo_api():
+    client = create_app().test_client()
+    home = client.get("/")
+    page = client.get("/garmin")
+    for response in (home, page):
+        assert response.status_code == 200
+        assert b'aria-label="Runform"' in response.data
+        assert b'href="/garmin"' in response.data
+        assert b'href="/"' in response.data
+    assert b'aria-current="page">Form analysis' in home.data
+    assert b'aria-current="page">Garmin Analytics' in page.data
+    assert b'SAMPLE DATA' in page.data and b'Connect Garmin' in page.data
+    for asset in ("garmin.css", "garmin.js", "shared.css"):
+        assert client.get(f"/static/{asset}").status_code == 200
+    payload = client.get("/api/garmin/demo").json
+    assert payload["demo"] is True
+    assert payload["report"]["runs_total"] == 32
+    assert client.get("/api/demo/status").json["available"] is False

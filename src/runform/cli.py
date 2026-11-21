@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from threading import Thread
 
+from runform.garmin import demo_payload
 from runform.pipeline import analyze
 from runform.web import create_app
 
@@ -21,7 +22,17 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--model", type=Path)
     serve.add_argument("--demo", type=Path)
+    garmin = commands.add_parser("garmin", help="Export the Garmin Analytics demo report")
+    garmin.add_argument("--demo", action="store_true", required=True)
+    garmin.add_argument("--out", type=Path, default=Path("activities.json"))
     args = parser.parse_args(argv)
+    if args.command == "garmin":
+        payload = demo_payload()
+        args.out.write_text(json.dumps(payload, indent=2) + "\n")
+        report = payload["report"]
+        print(f"Garmin demo: {report['runs_total']} runs; {report['distance_miles']:g} miles")
+        print(f"Report saved to {args.out}")
+        return
     if args.command == "serve":
         print(f"Running Form Analyzer at http://{args.host}:{args.port}")
         demo = args.demo

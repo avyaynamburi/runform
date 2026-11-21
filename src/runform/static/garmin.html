@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Runform · Garmin Analytics</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="/static/garmin.css" />
+  <link rel="stylesheet" href="/static/shared.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</head>
+<body>
+  <div class="analytics-shell">
+  <header class="app-header"><a class="brand" href="/">RUNFORM<span> / STRIDE LAB</span></a><nav class="app-nav" aria-label="Runform"><a href="/">Form analysis</a><a href="/garmin" aria-current="page">Garmin Analytics</a></nav><span class="tag">LOCAL ANALYSIS</span></header>
+  <section class="analytics-intro" aria-labelledby="analytics-title"><p class="eyebrow">THE BIGGER PICTURE</p><h1 id="analytics-title">Your training,<br><span>in context.</span></h1><p class="subtitle">Pair a closer look at your form with the story of your runs.</p></section>
+  <div id="data-banner" class="data-banner" role="status"><div><strong id="data-mode">SAMPLE DATA</strong><p id="data-description">An invented training history. Explore the dashboard or connect your Garmin account.</p></div><button id="connect-garmin" class="btn-primary" type="button">Connect Garmin</button></div>
+  <div class="analytics-toolbar">
+    <nav id="header-nav" class="hidden" aria-label="Analytics views"><button class="nav-tab active" data-page="dashboard" type="button">Dashboard</button><button class="nav-tab" data-page="mood" type="button">Mood</button></nav>
+    <div class="analytics-account"><button id="theme-toggle" class="btn-ghost" type="button">Light theme</button><div id="header-auth" class="hidden"><span id="header-user"></span><button id="logout-btn" class="btn-ghost" type="button">Disconnect</button></div></div>
+  </div>
+  <p id="chart-notice" class="integration-notice hidden" role="status">Charts could not load. Activity details and summaries are still available. Check your connection and reload to load the chart library.</p>
+  <!-- LOGIN -->
+  <div id="login-screen" class="hidden">
+    <div class="auth-card">
+      <h2>Connect Garmin</h2>
+      <p>Use your Garmin Connect account to load your running history. Credentials and sessions stay in memory on this local server.</p>
+      <form id="login-form">
+        <label for="email-input">Email</label>
+        <input type="email" id="email-input" placeholder="you@example.com" required autocomplete="email" />
+        <label for="password-input">Password</label>
+        <input type="password" id="password-input" placeholder="Password" required autocomplete="current-password" />
+        <button type="submit" id="login-btn" class="btn-primary">Sign in</button>
+      </form>
+      <div id="login-error" class="form-error hidden" role="alert"></div><button class="btn-ghost return-demo" type="button">Back to demo</button>
+    </div>
+  </div>
+
+  <!-- MFA -->
+  <div id="mfa-screen" class="hidden">
+    <div class="auth-card">
+      <h2>Verification</h2>
+      <p>Garmin sent a code to your registered email or phone. Enter it below.</p>
+      <form id="mfa-form">
+        <label for="mfa-input">Verification code</label>
+        <input type="text" id="mfa-input" placeholder="000000" maxlength="8"
+               autocomplete="one-time-code" inputmode="numeric" />
+        <button type="submit" id="mfa-btn" class="btn-primary">Verify</button>
+      </form>
+      <div id="mfa-error" class="form-error hidden" role="alert"></div><button class="btn-ghost return-demo" type="button">Back to demo</button>
+    </div>
+  </div>
+
+  <!-- LOADING -->
+  <div id="loading-screen" class="hidden">
+    <div class="loading-spinner"></div>
+    <p>Fetching your activities from Garmin…</p>
+  </div>
+
+  <!-- DASHBOARD -->
+  <main id="dashboard" class="hidden">
+
+    <!-- Hero: stats on top, charts below -->
+    <section class="hero" id="page-dashboard">
+      <div class="hero-avatar-row">
+        <div class="hero-stats-row">
+          <div class="hero-stat">
+            <div class="hero-stat-value" id="stat-total-dist">—</div>
+            <div class="hero-stat-unit">total miles</div>
+          </div>
+          <div class="hero-divider"></div>
+          <div class="hero-stat">
+            <div class="hero-stat-value" id="stat-total-time">—</div>
+            <div class="hero-stat-unit">total time</div>
+          </div>
+          <div class="hero-divider"></div>
+          <div class="hero-stat">
+            <div class="hero-stat-value" id="stat-total-runs">—</div>
+            <div class="hero-stat-unit">total runs</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-charts-row">
+        <div class="hero-panel">
+          <div class="panel-label">Weekly Mileage</div>
+          <canvas id="chart-weekly-miles"></canvas>
+        </div>
+        <div class="hero-panel">
+          <div class="panel-label">Average Pace</div>
+          <canvas id="chart-pace"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Advanced Statistics -->
+    <section class="advanced" id="page-advanced">
+      <h2 class="adv-title">Running dynamics</h2><p class="metric-context">Device metrics complement your video analysis. Colored ranges describe comparisons, not universal technique targets.</p>
+
+      <!-- Stat cards -->
+      <div class="adv-cards">
+        <div class="adv-card">
+          <div class="adv-card-label">Avg Heart Rate</div>
+          <div class="adv-card-value" id="stat-avg-hr">—</div>
+          <div class="adv-card-unit">bpm</div>
+        </div>
+        <div class="adv-card" id="card-avg-cadence">
+          <div class="adv-card-label">Avg Cadence</div>
+          <div class="adv-card-value" id="stat-avg-cadence">—</div>
+          <div class="adv-card-unit">spm</div>
+          <div class="adv-card-target">Compare at similar pace</div>
+        </div>
+        <div class="adv-card" id="card-avg-vr">
+          <div class="adv-card-label">Avg Vertical Ratio</div>
+          <div class="adv-card-value" id="stat-avg-vr">—</div>
+          <div class="adv-card-unit">%</div>
+          <div class="adv-card-target">Relative to stride length</div>
+        </div>
+        <div class="adv-card" id="card-avg-gct">
+          <div class="adv-card-label">Avg Ground Contact</div>
+          <div class="adv-card-value" id="stat-avg-gct">—</div>
+          <div class="adv-card-unit">ms</div>
+          <div class="adv-card-target">Depends on speed and terrain</div>
+        </div>
+        <div class="adv-card">
+          <div class="adv-card-label">Avg Pace</div>
+          <div class="adv-card-value" id="stat-avg-pace">—</div>
+          <div class="adv-card-unit">min / mile</div>
+        </div>
+      </div>
+
+      <!-- Trend charts -->
+      <div class="adv-charts">
+        <div class="adv-chart-card">
+          <div class="panel-label">Cadence Over Time</div>
+          <canvas id="chart-cadence"></canvas>
+        </div>
+        <div class="adv-chart-card">
+          <div class="panel-label">Vertical Ratio Over Time</div>
+          <canvas id="chart-vr"></canvas>
+        </div>
+      </div>
+
+      <!-- AI Coaching Section -->
+      <div class="ai-coaching-section">
+        <div class="ai-coaching-header">
+          <h3 class="ai-coaching-title">Training insights</h3>
+          <button id="analyze-trends-btn" class="btn-ai">Show sample coaching</button>
+        </div>
+        <p id="coaching-privacy" class="coaching-privacy">Demo coaching is prewritten. In connected mode, coaching is optional; requesting it sends the displayed run metrics to Google Gemini, without GPS routes.</p><div id="trends-analysis-result" class="ai-result hidden"></div>
+      </div>
+
+      <!-- Activity table -->
+      <div class="adv-table-header">
+        <h3>All Runs</h3>
+        <span id="run-count" class="run-count"></span>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Distance</th>
+              <th>Time</th>
+              <th>Avg Pace</th>
+              <th>Avg HR</th>
+              <th>Cadence</th>
+              <th>Vert Ratio</th>
+              <th>GCT</th>
+              <th>Calories</th>
+            </tr>
+          </thead>
+          <tbody id="activity-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Mood Page -->
+    <section id="page-mood" class="hidden mood-page">
+      <div id="avatar-wrap"></div>
+      <div id="avatar-status" class="avatar-status"></div>
+      <div class="happiness-bar-wrap">
+        <div class="happiness-bar-label">Happiness</div>
+        <div class="happiness-bar-track">
+          <div id="happiness-bar-fill" class="happiness-bar-fill"></div>
+        </div>
+      </div>
+
+      <div class="last-run-box">
+        <div class="last-run-value" id="mood-last-run">—</div>
+        <div class="last-run-label">since last run</div>
+      </div>
+
+      <div class="hero-stats-row">
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="mood-total-dist">—</div>
+          <div class="hero-stat-unit">total miles</div>
+        </div>
+        <div class="hero-divider"></div>
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="mood-total-time">—</div>
+          <div class="hero-stat-unit">total time</div>
+        </div>
+        <div class="hero-divider"></div>
+        <div class="hero-stat">
+          <div class="hero-stat-value" id="mood-total-runs">—</div>
+          <div class="hero-stat-unit">total runs</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- RUN DETAIL MODAL -->
+  <div id="modal-overlay" class="hidden">
+    <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
+      <button id="modal-close" class="modal-close-btn">Close</button>
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  </div>
+  <script src="/static/garmin.js"></script>
+</body>
+</html>

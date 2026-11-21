@@ -241,3 +241,14 @@ def test_serve_demo(monkeypatch, tmp_path, explicit):
     main(["serve", "--port", "9", *(["--demo", str(clip)] if explicit else [])])
     assert calls == [{"host": "127.0.0.1", "port": 9}]
     assert warmed.wait(1)
+
+
+def test_garmin_demo_export(tmp_path, capsys):
+    output = tmp_path / "activities.json"
+    main(["garmin", "--demo", "--out", str(output)])
+    payload = json.loads(output.read_text())
+    assert payload["demo"] is True
+    assert payload["report"]["runs_total"] == len(payload["activities"]) == 32
+    assert payload["report"]["cadence_spm"] > 160
+    assert payload["activities"][0]["strideLength"] > 0
+    assert "Garmin demo: 32 runs" in capsys.readouterr().out

@@ -7,3 +7,8 @@ samples/*.mp4
 *.task
 r.json
 .DS_Store
+
+.env
+.env.*
+!.env.example
+activities.json
