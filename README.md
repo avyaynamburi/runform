@@ -6,6 +6,12 @@ Runform turns a side-view running video into an interactive breakdown of how you
 
 ![Runform landing page with a running-video upload area](docs/runform.png)
 
+### Pose tracking in action
+
+![Runform analyzing a runner in a white shirt with a stick-figure pose overlay](docs/runform-analysis.png)
+
+An uploaded side-view running clip with the app's pose overlay. The connected landmarks follow the runner's joints during playback and support the stride measurements shown in the guided tour.
+
 ## Features
 
 - **Five running metrics:** cadence, trunk lean, knee angle at landing, vertical oscillation, and overstride.
